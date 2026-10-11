@@ -30,13 +30,26 @@ WhitewaterClient client = WhitewaterClient.builder()
 | `client.subscribe(reader, feed, start, onRecords)` | Managed durable consume: provisions the Reader, runs open → fetch → deliver → ack on a background thread; `Subscription.close()` to stop. `RecordStore` is a ready-made keyed sink |
 
 ```java
-var store = RecordStore.named("employee-store");
-client.feeds().load("hr.employees", ReaderStart.beginning(), store);   // bulk fill
+var store = RecordStore.named("employee-store")
+        .addKey("passport").addKey("department");                       // up to 10 named keys
+
+client.loadStore(store).fromFeed("hr.employees", ReaderStart.beginning(),
+        (s, record) -> s.upsert(record)                                 // bulk fill, projected
+                .withKey(record.key())
+                .withNamedKey("passport", record.metadata().get("pp")));
+
+store.get("emp-1");                    // by primary key
+store.get("passport", "P123");         // by named key — non-unique, returns a list
+store.forEachParallel(3, entry -> export(entry.record()));
+
 try (var sub = client.subscribe("hr-view", "hr.employees",
         ReaderStart.now(), store::putAll)) {                            // keep it warm
     Thread.sleep(Duration.ofDays(1));                                   // app stays alive
 }
 ```
+
+`client.feeds().load(feed, start, sink)` remains the lighter one-shot
+read when you don't need named-key projections.
 
 Errors surface as `WhitewaterException` subtypes mapped from wire `code`
 values (`stale_epoch`, `lease.busy`, `lease.stale_lease`,

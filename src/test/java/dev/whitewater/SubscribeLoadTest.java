@@ -16,6 +16,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -52,6 +53,15 @@ class SubscribeLoadTest {
               "warning": null,
               "results": [{"statement": "s", "message": "ok", "data": {}}]
             }""";
+
+    private static FeedRecord record(String cursor, byte[] key) {
+        return new FeedRecord(
+                Cursor.of(cursor),
+                java.util.UUID.fromString("00000000-0000-7000-8000-000000000002"),
+                java.util.UUID.fromString("00000000-0000-7000-8000-000000000003"),
+                7, 1697040000123456789L, 1697040000223456789L,
+                key, "val".getBytes(StandardCharsets.UTF_8), Map.of());
+    }
 
     private static String recordJson(String cursor) {
         return recordJson(cursor, "aw==");
@@ -257,6 +267,70 @@ class SubscribeLoadTest {
         } finally {
             refused.stop(0);
         }
+    }
+
+    @Test
+    void namedKeysIndexRowsNonUniquelyAndDeleteCleansPostings() throws Exception {
+        var store = RecordStore.named("employee-store").addKey("department");
+        var record = record("r1", "emp-1".getBytes());
+        var second = record("r2", "emp-2".getBytes());
+
+        store.upsert(record).withKey("emp-1").withNamedKey("department", "eng");
+        store.upsert(second).withKey("emp-2").withNamedKey("department", "eng");
+
+        var eng = store.get("department", "eng");
+        assertEquals(2, eng.size(), "named lookups are not unique");
+        assertEquals("r1", eng.get(0).cursor().value());
+        assertTrue(store.get("emp-1").isPresent());
+        assertThrows(IllegalArgumentException.class,
+                () -> store.get("undeclared", "x"), "undeclared named key refused");
+
+        assertTrue(store.delete("emp-1"));
+        assertEquals(1, store.get("department", "eng").size(),
+                "delete strips the row's named postings");
+        assertFalse(store.get("emp-1").isPresent());
+
+        store.clear();
+        assertEquals(0, store.size());
+        assertTrue(store.get("department", "eng").isEmpty());
+    }
+
+    @Test
+    void copyCarriesNamedPostingsAndForEachVisitsEveryRow() throws Exception {
+        var store = RecordStore.named("src").addKey("team");
+        store.upsert(record("r1", "a".getBytes())).withKey("a").withNamedKey("team", "t1");
+        store.upsert(record("r2", "b".getBytes())).withKey("b").withNamedKey("team", "t2");
+
+        var target = RecordStore.named("dst");
+        store.copy(target);
+
+        assertEquals(2, target.size());
+        assertEquals(List.of("team"), target.namedKeys(), "copy declares the named key");
+        assertEquals(1, target.get("team", "t1").size());
+
+        var seen = new java.util.concurrent.atomic.AtomicInteger();
+        store.forEachParallel(3, entry -> {
+            assertNotNull(entry.primaryKey());
+            assertNotNull(entry.record());
+            seen.incrementAndGet();
+        });
+        assertEquals(2, seen.get());
+    }
+
+    @Test
+    void loadStoreProjectsRowsThroughTheUpsertCallback() throws Exception {
+        temporaryPages.add(temporaryPageJson("c1", "r1"));
+        temporaryPages.add(temporaryPageJson(null));
+
+        var store = RecordStore.named("employee-store").addKey("department");
+        long loaded = client.loadStore(store).fromFeed(
+                "hr.employees", ReaderStart.beginning(),
+                (s, record) -> s.upsert(record)
+                        .withKey(record.key())
+                        .withNamedKey("department", "eng"));
+
+        assertEquals(1, loaded);
+        assertEquals(1, store.get("department", "eng").size());
     }
 
     private JsonNode firstBody() throws IOException {

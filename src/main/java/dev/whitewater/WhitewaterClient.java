@@ -365,6 +365,16 @@ public final class WhitewaterClient implements AutoCloseable {
         return subscribe(reader, feed, start, onRecords, null);
     }
 
+    /**
+     * Bulk materialization of Feed history into a {@link RecordStore}:
+     * the {@code fromFeed} projection callback picks each row's primary
+     * key and named-key values via {@code store.upsert(record)}.
+     */
+    public LoadStore loadStore(dev.whitewater.model.RecordStore store) {
+        Objects.requireNonNull(store, "store");
+        return new LoadStore(this, store);
+    }
+
     @Override
     public void close() {
         // java.net.http.HttpClient needs no explicit shutdown.
