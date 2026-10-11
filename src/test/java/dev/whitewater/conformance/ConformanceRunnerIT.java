@@ -246,6 +246,38 @@ class ConformanceRunnerIT {
                         page);
                 yield Transport.json().createObjectNode();
             }
+            case "admin.commands" -> {
+                var commands = new ArrayList<Map<String, Object>>();
+                for (JsonNode command : args.get("commands")) {
+                    commands.add(Transport.json().convertValue(command, Map.class));
+                }
+                yield toJson(client.admin().commands(commands));
+            }
+            case "feed.append" -> {
+                var record = new dev.whitewater.model.FeedAppend(
+                        UUID.fromString(args.get("request_id").asText()),
+                        UUID.fromString(args.get("writer_session_id").asText()),
+                        args.get("writer_epoch").asLong(),
+                        args.get("sequence").asLong(),
+                        decodeBytes(args.get("key")),
+                        decodeBytes(args.get("payload")),
+                        args.hasNonNull("event_time_ns") ? args.get("event_time_ns").asLong() : null,
+                        decodeMetadata(args.path("metadata")));
+                yield toJson(client.feeds().append(args.get("feed").asText(), record));
+            }
+            case "reader.temporary_fetch" -> {
+                var options = new dev.whitewater.model.TemporaryFetchOptions(
+                        args.hasNonNull("after")
+                                ? new dev.whitewater.model.Cursor(args.get("after").asText())
+                                : null,
+                        args.hasNonNull("limit") ? args.get("limit").asInt() : null,
+                        args.path("new_only").asBoolean(false) ? Boolean.TRUE : null,
+                        args.path("tail").asBoolean(false) ? Boolean.TRUE : null,
+                        args.hasNonNull("wait_ms") ? args.get("wait_ms").asLong() : null,
+                        args.hasNonNull("after_event_time_ns")
+                                ? args.get("after_event_time_ns").asLong() : null);
+                yield toJson(client.feeds().temporaryFetch(args.get("feed").asText(), options));
+            }
             case "feed.records" -> {
                 String path = "/v1/feeds/records?feed=" + args.get("feed").asText()
                         + (args.hasNonNull("limit") ? "&limit=" + args.get("limit").asInt() : "");
