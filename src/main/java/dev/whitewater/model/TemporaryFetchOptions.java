@@ -33,6 +33,11 @@ public record TemporaryFetchOptions(
         return new TemporaryFetchOptions(null, null, true, null, null, null);
     }
 
+    /** Read a bounded page of records whose event time is at or after {@code nanos}. */
+    public static TemporaryFetchOptions afterEventTime(long nanos, int limit) {
+        return new TemporaryFetchOptions(null, limit, null, null, null, nanos);
+    }
+
     public TemporaryFetchOptions withAfter(Cursor cursor) {
         return new TemporaryFetchOptions(cursor, limit, newOnly, tail, waitMs, afterEventTimeNs);
     }

@@ -11,6 +11,10 @@ import java.nio.charset.StandardCharsets;
  * "subscribe" pattern for applications, versus the ephemeral tail in
  * {@link TailFeed}.
  *
+ * <p>For a managed loop — auto-provisioning, retry policy, and a
+ * {@code close()}-able handle — use {@code client.subscribe(...)} instead
+ * of this explicit form.
+ *
  * The loop is explicit — Whitewater Readers pull rather than push:
  *
  *   open → [ fetch → process → ack ] → close

@@ -79,6 +79,19 @@ Three shapes, in increasing durability:
    `open(capacity)` → `fetch(session, limit)` → `ack(session,
    deliveredCursor)` → `close(session)`. Progress survives restarts.
 
+Two managed wrappers sit on top of those primitives:
+
+- **`feeds().load(feed, start, sink)`** — one-shot bulk read: pages
+  `temporaryFetch` from `ReaderStart` until the frontier is drained.
+  `sink` is a `RecordStore` (a named keyed in-memory map) or any
+  `Consumer<List<FeedRecord>>`.
+- **`client.subscribe(reader, feed, start, onRecords[, onError])`** — a
+  durable consume loop on a background thread: provisions the Reader
+  when missing, then `open` → [`fetch` → `onRecords` → `ack`] → `close`.
+  Transient errors retry; `StaleSession` and hard refusals terminate via
+  `onError`/`failure()`. The non-daemon thread keeps the JVM alive until
+  `Subscription.close()`.
+
 For cooperating consumers, `client.subscriptionMember(sub)` gives the
 lease vocabulary: `join` → `claim`/`renew`/`release` → `fetch` → `ack`.
 Members claim work leases; there is no global rebalance.

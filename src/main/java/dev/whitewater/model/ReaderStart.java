@@ -8,35 +8,60 @@ package dev.whitewater.model;
  */
 public final class ReaderStart {
 
-    private final String wcl;
+    public enum Kind {BEGINNING, NOW, CURSOR, TIMESTAMP}
 
-    private ReaderStart(String wcl) {
-        this.wcl = wcl;
+    private final Kind kind;
+    private final Cursor cursor;
+    private final long timestampNs;
+
+    private ReaderStart(Kind kind, Cursor cursor, long timestampNs) {
+        this.kind = kind;
+        this.cursor = cursor;
+        this.timestampNs = timestampNs;
     }
 
     /** From the oldest retained record. */
     public static ReaderStart beginning() {
-        return new ReaderStart("BEGINNING");
+        return new ReaderStart(Kind.BEGINNING, null, 0);
     }
 
     /** From records appended after creation. */
     public static ReaderStart now() {
-        return new ReaderStart("NOW");
+        return new ReaderStart(Kind.NOW, null, 0);
     }
 
     /** From an opaque Cursor previously returned by the Riverbed. */
     public static ReaderStart cursor(Cursor cursor) {
-        return new ReaderStart("CURSOR '" + escape(cursor.value()) + "'");
+        return new ReaderStart(Kind.CURSOR, cursor, 0);
     }
 
     /** From a signed Unix epoch nanosecond timestamp. */
     public static ReaderStart timestampNs(long nanos) {
-        return new ReaderStart("TIMESTAMP " + nanos);
+        return new ReaderStart(Kind.TIMESTAMP, null, nanos);
+    }
+
+    public Kind kind() {
+        return kind;
+    }
+
+    /** Set when {@link #kind()} is {@code CURSOR}. */
+    public Cursor cursor() {
+        return cursor;
+    }
+
+    /** Set when {@link #kind()} is {@code TIMESTAMP}. */
+    public long timestampNs() {
+        return timestampNs;
     }
 
     /** The WCL {@code START AT} operand, e.g. {@code BEGINNING}. */
     public String wcl() {
-        return wcl;
+        return switch (kind) {
+            case BEGINNING -> "BEGINNING";
+            case NOW -> "NOW";
+            case CURSOR -> "CURSOR '" + escape(cursor.value()) + "'";
+            case TIMESTAMP -> "TIMESTAMP " + timestampNs;
+        };
     }
 
     private static String escape(String value) {

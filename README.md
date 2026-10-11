@@ -26,7 +26,17 @@ WhitewaterClient client = WhitewaterClient.builder()
 | `client.writer(name, epoch)` | Idempotent single and batch appends (`request_id` dedup) |
 | `client.reader(name)` | Named-Reader sessions: open / fetch / ack / close / resume |
 | `client.subscriptionMember(sub)` | Join, claim, renew, fetch, ack, release under fenced leases |
-| `client.feeds()` | Committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends |
+| `client.feeds()` | Committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends, `load(feed, start, sink)` one-shot history reads |
+| `client.subscribe(reader, feed, start, onRecords)` | Managed durable consume: provisions the Reader, runs open → fetch → deliver → ack on a background thread; `Subscription.close()` to stop. `RecordStore` is a ready-made keyed sink |
+
+```java
+var store = RecordStore.named("employee-store");
+client.feeds().load("hr.employees", ReaderStart.beginning(), store);   // bulk fill
+try (var sub = client.subscribe("hr-view", "hr.employees",
+        ReaderStart.now(), store::putAll)) {                            // keep it warm
+    Thread.sleep(Duration.ofDays(1));                                   // app stays alive
+}
+```
 
 Errors surface as `WhitewaterException` subtypes mapped from wire `code`
 values (`stale_epoch`, `lease.busy`, `lease.stale_lease`,

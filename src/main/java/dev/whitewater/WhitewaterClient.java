@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.internal.Wire;
 import dev.whitewater.model.ControlExecution;
+import dev.whitewater.model.FeedRecord;
 import dev.whitewater.model.ReaderStart;
 
 import java.net.URI;
@@ -16,6 +17,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
+import java.util.function.Consumer;
 
 /**
  * Entry point for a Whitewater Riverbed: logical resource management (WCL + typed commands), Writer,
@@ -35,6 +37,8 @@ public final class WhitewaterClient implements AutoCloseable {
 
     public static final String SPEC_VERSION = "1.0.0";
     public static final int PROTOCOL_MAJOR = 1;
+
+    private static final int SUBSCRIBE_CAPACITY = 128;
 
     private final Transport transport;
     private final Executor executor;
@@ -318,6 +322,47 @@ public final class WhitewaterClient implements AutoCloseable {
     /** A cooperating member of a named Subscription. */
     public SubscriptionMemberClient subscriptionMember(String subscription) {
         return new SubscriptionMemberClient(transport, subscription);
+    }
+
+    /**
+     * Subscribe durably to a Feed: ensures a Reader named {@code reader}
+     * exists (creating it at {@code start} when missing), opens a session,
+     * and invokes {@code onRecords} per fetched page on a background thread,
+     * acknowledging after each batch.
+     *
+     * <p>The returned {@link Subscription} keeps the JVM running until
+     * {@link Subscription#close()} — the loop retries transient failures,
+     * and reports terminal errors (for example {@link
+     * WhitewaterException.StaleSession} when another client opens the same
+     * Reader) through {@code onError}.
+     *
+     * <pre>{@code
+     * var store = RecordStore.named("employee-store");
+     * try (var sub = client.subscribe("hr-view", "hr.employees",
+     *         ReaderStart.beginning(), store::putAll, Throwable::printStackTrace)) {
+     *     Thread.sleep(Duration.ofDays(1));     // or just keep working
+     * }
+     * }</pre>
+     */
+    public Subscription subscribe(
+            String reader,
+            String feed,
+            ReaderStart start,
+            Consumer<List<FeedRecord>> onRecords,
+            Consumer<WhitewaterException> onError) {
+        Objects.requireNonNull(onRecords, "onRecords");
+        var subscription = new Subscription(
+                this, reader, feed, start, SUBSCRIBE_CAPACITY, onRecords, onError);
+        subscription.start();
+        return subscription;
+    }
+
+    public Subscription subscribe(
+            String reader,
+            String feed,
+            ReaderStart start,
+            Consumer<List<FeedRecord>> onRecords) {
+        return subscribe(reader, feed, start, onRecords, null);
     }
 
     @Override

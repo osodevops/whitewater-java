@@ -8,6 +8,8 @@ import dev.whitewater.model.AppendResult;
 import dev.whitewater.model.Cursor;
 import dev.whitewater.model.FeedAppend;
 import dev.whitewater.model.FeedRecord;
+import dev.whitewater.model.ReaderStart;
+import dev.whitewater.model.RecordStore;
 import dev.whitewater.model.TemporaryFetchOptions;
 import dev.whitewater.model.TemporaryFetchPage;
 
@@ -19,6 +21,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /**
  * Feed-level ad-hoc operations: committed record reads, anonymous temporary
@@ -27,6 +30,8 @@ import java.util.concurrent.Executor;
  * durable progress use {@link ReaderSessionClient}.
  */
 public final class FeedClient {
+
+    private static final int LOAD_PAGE = 512;
 
     private final Transport transport;
     private final Executor executor;
@@ -89,6 +94,47 @@ public final class FeedClient {
 
     public TemporaryFetchPage temporaryFetch(String feed, Cursor after, int limit) {
         return temporaryFetch(feed, TemporaryFetchOptions.page(after, limit));
+    }
+
+    /**
+     * Bulk-read committed Feed history once, from {@code start}, delivering
+     * each page to {@code sink} until the current frontier is drained.
+     * Returns the number of records delivered. Use {@link
+     * WhitewaterClient#subscribe} when the sink should keep receiving.
+     *
+     * <p>{@link ReaderStart#now()} loads nothing (the frontier is empty at
+     * call time); {@code cursor}/{@code timestampNs} resume from that point.
+     */
+    public long load(String feed, ReaderStart start, Consumer<List<FeedRecord>> sink) {
+        Objects.requireNonNull(feed, "feed");
+        Objects.requireNonNull(start, "start");
+        Objects.requireNonNull(sink, "sink");
+        TemporaryFetchOptions options = firstPage(start);
+        long loaded = 0;
+        while (true) {
+            TemporaryFetchPage page = temporaryFetch(feed, options);
+            if (page.records().isEmpty()) {
+                return loaded;
+            }
+            sink.accept(page.records());
+            loaded += page.records().size();
+            options = TemporaryFetchOptions.page(page.nextCursor(), LOAD_PAGE);
+        }
+    }
+
+    /** {@code load} that materializes records into a {@link RecordStore}. */
+    public long load(String feed, ReaderStart start, RecordStore store) {
+        Objects.requireNonNull(store, "store");
+        return load(feed, start, store::putAll);
+    }
+
+    private static TemporaryFetchOptions firstPage(ReaderStart start) {
+        return switch (start.kind()) {
+            case BEGINNING -> TemporaryFetchOptions.page(null, LOAD_PAGE);
+            case NOW -> TemporaryFetchOptions.atEnd();
+            case CURSOR -> TemporaryFetchOptions.page(start.cursor(), LOAD_PAGE);
+            case TIMESTAMP -> TemporaryFetchOptions.afterEventTime(start.timestampNs(), LOAD_PAGE);
+        };
     }
 
     /**
