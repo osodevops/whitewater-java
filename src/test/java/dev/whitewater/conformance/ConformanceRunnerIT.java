@@ -37,12 +37,18 @@ class ConformanceRunnerIT {
 
     private static WhitewaterClient client;
     private static Path conformanceDir;
+    private static String endpointsEnv;
+    private static String defaultApiKey;
+    private WhitewaterClient activeClient;
+    private Transport activeTransport;
 
     @BeforeAll
     static void setUp() {
         String endpoints = System.getenv("WHITEWATER_ENDPOINTS");
         String apiKey = System.getenv().getOrDefault(
                 "WHITEWATER_API_KEY", "whitewater-local-development-admin-key");
+        endpointsEnv = endpoints;
+        defaultApiKey = apiKey;
         conformanceDir = Paths.get(System.getenv().getOrDefault(
                 "WHITEWATER_SPEC_DIR", "spec/conformance"));
         Assumptions:
@@ -87,6 +93,11 @@ class ConformanceRunnerIT {
         lastResult = null;
         lastError = null;
         JsonNode scenario = Transport.json().readTree(Files.readAllBytes(fixture));
+        String scenarioKey = scenario.hasNonNull("api_key")
+                ? scenario.get("api_key").asText() : defaultApiKey;
+        activeClient = buildClient(scenarioKey);
+        activeTransport = new Transport(endpointUris(), scenarioKey,
+                java.time.Duration.ofSeconds(30));
         JsonNode steps = scenario.path("steps");
         for (JsonNode step : steps) {
             String op = step.path("op").asText();
@@ -117,14 +128,14 @@ class ConformanceRunnerIT {
     private JsonNode execute(String op, JsonNode args, JsonNode step) throws Exception {
         return switch (op) {
             case "wcl" -> {
-                AdminClient admin = client.admin();
+                AdminClient admin = activeClient.admin();
                 String requestId = args.path("request_id").isTextual()
                         ? args.get("request_id").asText() : UUID.randomUUID().toString();
                 var execution = admin.wcl(args.get("script").asText(), UUID.fromString(requestId));
                 yield toJson(execution);
             }
             case "writer.append" -> {
-                var writer = client.writer(
+                var writer = activeClient.writer(
                         args.get("writer").asText(), args.path("session_epoch").asLong());
                 var metadata = decodeMetadata(args.path("metadata"));
                 var result = writer.append(new dev.whitewater.WriterSessionClient.Append(
@@ -148,7 +159,7 @@ class ConformanceRunnerIT {
                             record.hasNonNull("event_time_ns") ? record.get("event_time_ns").asLong() : null,
                             decodeMetadata(record.path("metadata"))));
                 }
-                var writer = client.writer(
+                var writer = activeClient.writer(
                         records.get(0).get("writer").asText(),
                         records.get(0).path("session_epoch").asLong());
                 var batch = writer.appendBatch(appends);
@@ -158,7 +169,7 @@ class ConformanceRunnerIT {
                 yield node;
             }
             case "reader.open" -> {
-                var session = client.reader(args.get("reader").asText())
+                var session = activeClient.reader(args.get("reader").asText())
                         .open(args.path("capacity").asInt(64),
                                 UUID.fromString(args.get("request_id").asText()));
                 yield toJson(session);
@@ -166,7 +177,7 @@ class ConformanceRunnerIT {
             case "reader.fetch" -> {
                 var session = new dev.whitewater.model.ReaderSession(
                         null, null, args.path("session_epoch").asLong(), 0, null, null);
-                var page = client.reader(args.get("reader").asText())
+                var page = activeClient.reader(args.get("reader").asText())
                         .fetch(session, args.hasNonNull("limit") ? args.get("limit").asInt() : null,
                                 UUID.fromString(args.get("request_id").asText()));
                 yield toJson(page);
@@ -174,7 +185,7 @@ class ConformanceRunnerIT {
             case "reader.ack" -> {
                 var session = new dev.whitewater.model.ReaderSession(
                         null, null, args.path("session_epoch").asLong(), 0, null, null);
-                var result = client.reader(args.get("reader").asText())
+                var result = activeClient.reader(args.get("reader").asText())
                         .ack(session, new dev.whitewater.model.Cursor(args.get("cursor").asText()),
                                 UUID.fromString(args.get("request_id").asText()));
                 yield toJson(result);
@@ -182,17 +193,17 @@ class ConformanceRunnerIT {
             case "reader.close" -> {
                 var session = new dev.whitewater.model.ReaderSession(
                         null, null, args.path("session_epoch").asLong(), 0, null, null);
-                var result = client.reader(args.get("reader").asText()).close(session);
+                var result = activeClient.reader(args.get("reader").asText()).close(session);
                 yield toJson(result);
             }
             case "member.join" -> {
-                var member = client.subscriptionMember(args.get("subscription").asText())
+                var member = activeClient.subscriptionMember(args.get("subscription").asText())
                         .join(UUID.fromString(args.get("member_id").asText()));
                 yield toJson(member);
             }
             case "member.claim" -> {
                 var member = joinedFrom(args);
-                var lease = client.subscriptionMember(args.get("subscription").asText())
+                var lease = activeClient.subscriptionMember(args.get("subscription").asText())
                         .claim(member, UUID.fromString(args.get("work_id").asText()),
                                 args.hasNonNull("lease_ticks") ? args.get("lease_ticks").asInt() : null);
                 var node = Transport.json().createObjectNode();
@@ -201,7 +212,7 @@ class ConformanceRunnerIT {
             }
             case "member.renew" -> {
                 var member = joinedFrom(args);
-                var client0 = client.subscriptionMember(args.get("subscription").asText());
+                var client0 = activeClient.subscriptionMember(args.get("subscription").asText());
                 var lease = client0.renew(member,
                         new dev.whitewater.SubscriptionMemberClient.WorkLease(
                                 UUID.fromString(args.get("work_id").asText()),
@@ -214,7 +225,7 @@ class ConformanceRunnerIT {
             }
             case "member.release" -> {
                 var member = joinedFrom(args);
-                client.subscriptionMember(args.get("subscription").asText()).release(member,
+                activeClient.subscriptionMember(args.get("subscription").asText()).release(member,
                         new dev.whitewater.SubscriptionMemberClient.WorkLease(
                                 UUID.fromString(args.get("work_id").asText()),
                                 member.memberId(), member.memberEpoch(),
@@ -223,7 +234,7 @@ class ConformanceRunnerIT {
             }
             case "member.fetch" -> {
                 var member = joinedFrom(args);
-                var page = client.subscriptionMember(args.get("subscription").asText()).fetch(member,
+                var page = activeClient.subscriptionMember(args.get("subscription").asText()).fetch(member,
                         new dev.whitewater.SubscriptionMemberClient.WorkLease(
                                 UUID.fromString(args.get("work_id").asText()),
                                 member.memberId(), member.memberEpoch(),
@@ -238,7 +249,7 @@ class ConformanceRunnerIT {
                         args.hasNonNull("cursor") ? new dev.whitewater.model.Cursor(args.get("cursor").asText()) : null,
                         readPositions(args.path("positions")),
                         0);
-                client.subscriptionMember(args.get("subscription").asText()).ack(member,
+                activeClient.subscriptionMember(args.get("subscription").asText()).ack(member,
                         new dev.whitewater.SubscriptionMemberClient.WorkLease(
                                 UUID.fromString(args.get("work_id").asText()),
                                 member.memberId(), member.memberEpoch(),
@@ -251,7 +262,7 @@ class ConformanceRunnerIT {
                 for (JsonNode command : args.get("commands")) {
                     commands.add(Transport.json().convertValue(command, Map.class));
                 }
-                yield toJson(client.admin().commands(commands));
+                yield toJson(activeClient.admin().commands(commands));
             }
             case "feed.append" -> {
                 var record = new dev.whitewater.model.FeedAppend(
@@ -263,7 +274,7 @@ class ConformanceRunnerIT {
                         decodeBytes(args.get("payload")),
                         args.hasNonNull("event_time_ns") ? args.get("event_time_ns").asLong() : null,
                         decodeMetadata(args.path("metadata")));
-                yield toJson(client.feeds().append(args.get("feed").asText(), record));
+                yield toJson(activeClient.feeds().append(args.get("feed").asText(), record));
             }
             case "reader.temporary_fetch" -> {
                 var options = new dev.whitewater.model.TemporaryFetchOptions(
@@ -276,14 +287,16 @@ class ConformanceRunnerIT {
                         args.hasNonNull("wait_ms") ? args.get("wait_ms").asLong() : null,
                         args.hasNonNull("after_event_time_ns")
                                 ? args.get("after_event_time_ns").asLong() : null);
-                yield toJson(client.feeds().temporaryFetch(args.get("feed").asText(), options));
+                yield toJson(activeClient.feeds().temporaryFetch(args.get("feed").asText(), options));
             }
             case "feed.records" -> {
                 String path = "/v1/feeds/records?feed=" + args.get("feed").asText()
-                        + (args.hasNonNull("limit") ? "&limit=" + args.get("limit").asInt() : "");
+                        + (args.hasNonNull("limit") ? "&limit=" + args.get("limit").asInt() : "")
+                        + (args.hasNonNull("after") ? "&after=" + args.get("after").asText() : "");
                 var node = Transport.json().createObjectNode();
-                // feed.records returns a bare array; wrap for uniform expect paths.
-                node.set("records", transportGet(path));
+                // Corpus asserts wire shape (key_base64, decimal-string
+                // nanoseconds), so bind the raw response.
+                node.set("records", activeTransport.get(path));
                 yield node;
             }
             default -> throw new UnsupportedOperationException(
@@ -293,23 +306,15 @@ class ConformanceRunnerIT {
 
     private final Transport transport = null; // set in setUp via client internals is not accessible
 
-    private JsonNode transportGet(String path) throws IOException {
-        // The public FeedClient surface doesn't exist yet; use a lightweight
-        // direct call through java.net.http for this admin GET.
-        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
-                .uri(java.net.URI.create(System.getenv("WHITEWATER_ENDPOINTS").split(",")[0] + path))
-                .GET()
-                .header("authorization", "Bearer " + System.getenv().getOrDefault(
-                        "WHITEWATER_API_KEY", "whitewater-local-development-admin-key"))
+    private static WhitewaterClient buildClient(String apiKey) {
+        return WhitewaterClient.builder()
+                .apiKey(apiKey)
+                .endpoints(endpointUris())
                 .build();
-        try {
-            var response = java.net.http.HttpClient.newHttpClient()
-                    .send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-            return Transport.json().readTree(response.body());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException(e);
-        }
+    }
+
+    private static List<URI> endpointUris() {
+        return Arrays.stream(endpointsEnv.split(",")).map(URI::create).toList();
     }
 
     private dev.whitewater.SubscriptionMemberClient.Joined joinedFrom(JsonNode args) {
@@ -463,10 +468,14 @@ class ConformanceRunnerIT {
     // ---- expectations ----
 
     private void evaluateExpectations(JsonNode expect, JsonNode result) {
-        if (expect.hasNonNull("error_code")) {
-            assertNotNull(lastError, "expected error " + expect.get("error_code").asText()
-                    + " but the step succeeded");
-            assertEquals(expect.get("error_code").asText(), lastError.code());
+        if (expect.hasNonNull("error_code") || expect.hasNonNull("error_status")) {
+            assertNotNull(lastError, "expected error " + expect + " but the step succeeded");
+            if (expect.hasNonNull("error_code")) {
+                assertEquals(expect.get("error_code").asText(), lastError.code());
+            }
+            if (expect.hasNonNull("error_status")) {
+                assertEquals(expect.get("error_status").asInt(), lastError.status());
+            }
             return;
         }
         if (lastError != null) {
