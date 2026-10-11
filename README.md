@@ -21,10 +21,11 @@ WhitewaterClient client = WhitewaterClient.builder()
 
 | Client | Covers |
 |---|---|
-| `client.admin()` | WCL script execution via `POST /v1/admin/wcl`, cluster health |
+| `client.admin()` | WCL (`POST /v1/admin/wcl`), typed commands (`POST /v1/admin/commands`), cluster health |
 | `client.writer(name, epoch)` | Idempotent single and batch appends (`request_id` dedup) |
 | `client.reader(name)` | Named-Reader sessions: open / fetch / ack / close / resume |
 | `client.subscriptionMember(sub)` | Join, claim, renew, fetch, ack, release under fenced leases |
+| `client.feeds()` | Committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends |
 
 Errors surface as `WhitewaterException` subtypes mapped from wire `code`
 values (`stale_epoch`, `lease.busy`, `lease.stale_lease`,

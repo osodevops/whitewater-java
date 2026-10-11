@@ -47,6 +47,11 @@ public final class WhitewaterClient implements AutoCloseable {
         return admin;
     }
 
+    /** Ad-hoc Feed operations: committed reads, temporary fetches, appends. */
+    public FeedClient feeds() {
+        return new FeedClient(transport, executor);
+    }
+
     /**
      * A Writer session facade. The epoch comes from
      * {@code OPEN WRITER SESSION <name>} via {@link AdminClient#wcl};

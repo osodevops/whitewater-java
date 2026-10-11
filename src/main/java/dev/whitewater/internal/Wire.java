@@ -132,4 +132,23 @@ public final class Wire {
         }
         return node;
     }
+
+    public static ObjectNode feedAppendRequest(String feed, FeedAppend record) {
+        ObjectNode node = Transport.json().createObjectNode();
+        node.put("request_id", record.requestId().toString());
+        node.put("feed", feed);
+        node.put("writer_session_id", record.writerSessionId().toString());
+        node.put("writer_epoch", record.writerEpoch());
+        node.put("sequence", record.sequence());
+        if (record.eventTimeNs() != null) {
+            node.put("event_time_ns", Long.toString(record.eventTimeNs()));
+        }
+        node.put("key_base64", b64(record.key()));
+        node.put("payload_base64", b64(record.payload()));
+        ObjectNode meta = node.putObject("metadata_base64");
+        if (record.metadata() != null) {
+            record.metadata().forEach((name, value) -> meta.put(name, b64(value)));
+        }
+        return node;
+    }
 }

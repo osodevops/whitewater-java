@@ -98,6 +98,12 @@ class ConformanceRunnerIT {
                 lastError = e;
                 lastResult = null;
             }
+            if (lastError != null && !step.hasNonNull("expect")) {
+                // An unhandled step failure is a scenario failure —
+                // surface it rather than letting downstream tokens
+                // resolve against a null binding and fail confusingly.
+                fail("step " + step.path("op").asText() + " failed: " + lastError.getMessage());
+            }
             if (step.hasNonNull("bind")) {
                 bound.put(step.get("bind").asText(), Objects.requireNonNullElse(
                         lastResult, Transport.json().nullNode()));

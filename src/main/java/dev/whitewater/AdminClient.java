@@ -39,6 +39,25 @@ public final class AdminClient {
         return Wire.controlExecution(transport.post("/v1/admin/wcl", body));
     }
 
+    /**
+     * Execute typed control commands synchronously. Commands are the same
+     * JSON shape the Control Plane accepts over {@code POST /v1/admin/commands},
+     * e.g. {@code Map.of("command", "show", "kind", "domains")}.
+     */
+    public ControlExecution commands(java.util.List<java.util.Map<String, Object>> commands) {
+        return commands(commands, UUID.randomUUID());
+    }
+
+    /** Execute typed commands under an explicit request identity. */
+    public ControlExecution commands(java.util.List<java.util.Map<String, Object>> commands, UUID requestId) {
+        var body = Transport.json().createObjectNode();
+        if (requestId != null) {
+            body.put("request_id", requestId.toString());
+        }
+        body.set("commands", Transport.json().valueToTree(commands));
+        return Wire.controlExecution(transport.post("/v1/admin/commands", body));
+    }
+
     public CompletableFuture<ControlExecution> wclAsync(String script) {
         return CompletableFuture.supplyAsync(() -> wcl(script), executor);
     }
