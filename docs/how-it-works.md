@@ -1,0 +1,103 @@
+# How the Java SDK works
+
+Everything a caller can do enters through one class —
+`dev.whitewater.WhitewaterClient` — and every HTTP call funnels through
+one internal `Transport`. There are no other network paths.
+
+## Layers
+
+```
+WhitewaterClient  ─┬─ wcl / commands / healthy          → POST /v1/admin/*
+                   ├─ createFeed / describeFeed / …     → typed WCL builders
+                   ├─ feeds()   → FeedClient            → /v1/feeds/*, /v1/readers/temporary/fetch
+                   ├─ writer(name, epoch)               → /v1/writers/append[-batch]
+                   ├─ reader(name)                      → /v1/readers/open|fetch|ack|close
+                   └─ subscriptionMember(name)          → /v1/subscriptions/members/*
+        │                      │
+     Transport            Wire (codec)
+   (endpoints,        (request building,
+    auth, errors)      response mapping)
+```
+
+### `Transport`
+
+Holds the endpoint list and API key. `post`/`get` round-robin the
+endpoints, attach `authorization: Bearer <key>`, and map every non-2xx
+response to a `WhitewaterException` subtype by the wire `code` field:
+
+- `stale_epoch` → `StaleSession`
+- `lease.*`, `writer.stale_sequence` → `LeaseConflict` / `Conflict`
+- `control.unavailable`, timeouts, unreachable Nodes → `Unavailable`
+- 5xx with no code → `AmbiguousResult`
+
+`AmbiguousResult` means the server may or may not have applied the
+write — **retry with the same `requestId`**, never a new one.
+
+### `Wire`
+
+The only place request JSON is built and response JSON is decoded.
+Record fields translate here: keys/payloads/metadata values are
+base64 `byte[]`, `event_time_ns`/`ingest_time_ns` are signed 64-bit
+nanoseconds on decimal strings, cursors stay opaque strings.
+
+## Resource management — two doors, one room
+
+`wcl(script)` sends a raw WCL script to `POST /v1/admin/wcl`. The typed
+methods are thin builders over it — `client.createFeed("orders.events")`
+serializes `CREATE FEED orders.events` and calls `wcl` internally.
+
+Two name validators run before interpolation:
+
+- `dotted()` — domains/feeds must match
+  `^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$`, ≤512 bytes.
+- `resource()` — writers/readers/subscriptions/roles must match
+  `^[A-Za-z][A-Za-z0-9_-]{0,127}$`.
+
+A bad name throws `IllegalArgumentException` locally — nothing reaches
+the wire, so `createFeed("x; DROP ...")` cannot inject a statement.
+
+`ReaderStart` supplies `START AT` positions: `beginning()`, `now()`,
+`cursor(c)` (single-quotes escaped `'` → `''`), `timestampNs(ns)`.
+
+Every management call returns `ControlExecution` — `requestId`,
+`revision`, `authority`, `warning`, and one `StatementResult` per WCL
+statement (`statement`, `message`, `data`).
+
+## Reading
+
+Three shapes, in increasing durability:
+
+1. **`feeds().records(feed, limit, after)`** — one-shot committed history
+   page.
+2. **`feeds().temporaryFetch(feed, options)`** — anonymous ephemeral
+   reader. `TemporaryFetchOptions.tail(after, limit, waitMs)` is a
+   server-side long-poll: the call blocks until records arrive or
+   `wait_ms` elapses, returning `records` + `nextCursor`. Continue with
+   `nextCursor`, never the last record's cursor — the page may be
+   filtered or empty.
+3. **`client.reader(name)`** — durable independent cursor.
+   `open(capacity)` → `fetch(session, limit)` → `ack(session,
+   deliveredCursor)` → `close(session)`. Progress survives restarts.
+
+For cooperating consumers, `client.subscriptionMember(sub)` gives the
+lease vocabulary: `join` → `claim`/`renew`/`release` → `fetch` → `ack`.
+Members claim work leases; there is no global rebalance.
+
+## Writing
+
+- **Named session**: `openWriterSession(name)` returns a `session_epoch`
+  in `results[0].data`; bind `client.writer(name, epoch)` and `append`
+  with a stable `requestId` per logical write. The server dedupes
+  identical request IDs and fences stale sequences.
+- **Ad-hoc**: `feeds().append(feed, new FeedAppend(requestId,
+  writerSessionId, key, payload))` — caller supplies ephemeral writer
+  identity; same dedup rule.
+
+## Testing
+
+Unit tests stub the wire with a JDK `HttpServer` capturing path + body,
+asserting both serialization and response mapping — no live Riverbed
+required. `ConformanceRunnerIT` replays the shared
+`sdk/spec/conformance` fixtures against a real Riverbed when
+`WHITEWATER_ENDPOINTS` and `WHITEWATER_SPEC_DIR` are set; it self-skips
+otherwise.
