@@ -2,7 +2,7 @@ package dev.whitewater.conformance;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import dev.whitewater.AdminClient;
+
 import dev.whitewater.WhitewaterClient;
 import dev.whitewater.WhitewaterException;
 import dev.whitewater.internal.Transport;
@@ -62,7 +62,7 @@ class ConformanceRunnerIT {
                 .apiKey(apiKey)
                 .endpoints(Arrays.stream(endpoints.split(",")).map(URI::create).toList())
                 .build();
-        assertTrue(client.admin().healthy(), "Riverbed must be healthy for conformance");
+        assertTrue(client.healthy(), "Riverbed must be healthy for conformance");
     }
 
     @TestFactory
@@ -128,10 +128,10 @@ class ConformanceRunnerIT {
     private JsonNode execute(String op, JsonNode args, JsonNode step) throws Exception {
         return switch (op) {
             case "wcl" -> {
-                AdminClient admin = activeClient.admin();
+                 
                 String requestId = args.path("request_id").isTextual()
                         ? args.get("request_id").asText() : UUID.randomUUID().toString();
-                var execution = admin.wcl(args.get("script").asText(), UUID.fromString(requestId));
+                var execution = activeClient.wcl(args.get("script").asText(), UUID.fromString(requestId));
                 yield toJson(execution);
             }
             case "writer.append" -> {
@@ -262,7 +262,7 @@ class ConformanceRunnerIT {
                 for (JsonNode command : args.get("commands")) {
                     commands.add(Transport.json().convertValue(command, Map.class));
                 }
-                yield toJson(activeClient.admin().commands(commands));
+                yield toJson(activeClient.commands(commands));
             }
             case "feed.append" -> {
                 var record = new dev.whitewater.model.FeedAppend(

@@ -176,7 +176,7 @@ class FeedClientTest {
                  "results": [{"statement": "show domains", "message": "ok",
                               "data": [{"name": "ops", "space_id": "d1"}]}]}
                 """;
-        var execution = client.admin().commands(List.of(
+        var execution = client.commands(List.of(
                 Map.of("command", "show", "kind", "domains")));
         JsonNode body = Transport.json().readTree(capturedBody);
         assertEquals("/v1/admin/commands", capturedPath);
