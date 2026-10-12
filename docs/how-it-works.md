@@ -63,6 +63,55 @@ Every management call returns `ControlExecution` — `requestId`,
 `revision`, `authority`, `warning`, and one `StatementResult` per WCL
 statement (`statement`, `message`, `data`).
 
+### WCL by example
+
+Raw script — several statements commit as one request (pass a shared
+`requestId` to dedupe a retried batch):
+
+```java
+client.wcl("""
+    CREATE DOMAIN shop;
+    CREATE FEED shop.orders;
+    CREATE WRITER orders-writer TO shop.orders;
+    OPEN WRITER SESSION orders-writer;
+    CREATE READER audit FROM shop.orders START AT BEGINNING;
+    SHOW FEEDS;
+    """);
+```
+
+The same calls through the typed builders — each serializes one WCL
+statement and calls `wcl` internally:
+
+```java
+client.createDomain("shop");                         // CREATE DOMAIN shop;
+client.createFeed("shop.orders");                    // CREATE FEED shop.orders;
+client.createWriter("orders-writer", "shop.orders");
+client.openWriterSession("orders-writer");           // epoch in .data()
+client.createReader("audit", "shop.orders", ReaderStart.beginning());
+client.listFeeds();                                  // SHOW FEEDS;
+client.seekReader("audit", ReaderStart.now());       // SEEK READER ... TO NOW;
+client.dropFeed("shop.orders");                      // DROP FEED shop.orders;
+```
+
+`client.commands(...)` is the second door — the typed JSON command
+path for what WCL does not spell. Declaring a StateStore with named
+keys is the current example (there is no `DEFINE STATESTORE` WCL
+statement yet):
+
+```java
+client.commands(List.of(Map.of(
+    "command", "define_state_store",
+    "name", "accounts.employees",
+    "source", Map.of("kind", "manual"),
+    "named_keys", List.of(
+        Map.of("name", "passport", "unique", true),
+        Map.of("name", "department", "unique", false)))));
+```
+
+(`client.stateStores().define(spec, null)` posts exactly this body for
+you.) `DROP` is spelled in WCL for every resource including stores:
+`client.wcl("DROP STATESTORE accounts.employees")` ≡ `store.drop()`.
+
 ## Reading
 
 Three shapes, in increasing durability:

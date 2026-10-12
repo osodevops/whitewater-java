@@ -95,6 +95,26 @@ store.drop();                               // or client.stateStores().drop(name
   materializes committed Feed history; named keys require a manual
   store until declared projections exist.
 
+### WCL and typed commands
+
+Everything above is a convenience over the Control Plane's two doors.
+WCL spells `DROP` for stores (there is no `DEFINE`/`MUTATE` spelling —
+declaration and data ops stay typed):
+
+```java
+client.wcl("DROP STATESTORE accounts.employees");
+client.wcl("DESCRIBE STATESTORE accounts.employees"); // stage incl. "dropped"
+```
+
+`commands` posts the typed command the facade builds for you:
+
+```java
+client.commands(List.of(Map.of(
+    "command", "define_state_store", "name", "accounts.employees",
+    "source", Map.of("kind", "manual"),
+    "named_keys", List.of(Map.of("name", "passport", "unique", true)))));
+```
+
 ## What a StateStore facade is **not**
 
 - **Not a local store** — there is no in-process copy to drift from
