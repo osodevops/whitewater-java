@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.internal.Wire;
 import dev.whitewater.model.ControlExecution;
+import dev.whitewater.model.Extractor;
 import dev.whitewater.model.MutationResult;
 import dev.whitewater.model.NamedKey;
 import dev.whitewater.model.StorePage;
@@ -71,8 +72,13 @@ public final class StateStore {
         return name;
     }
 
-    /** Declare a named secondary key for {@code define} (at most {@value #MAX_NAMED_KEYS}). */
-    public StateStore addKey(String namedKey, boolean unique) {
+    /**
+     * Declare a named secondary key for {@code define} (at most
+     * {@value #MAX_NAMED_KEYS}). {@code extractor} declares how replay
+     * projects each source-Feed record to this key's values — required
+     * on feed-sourced stores, refused on manual ones.
+     */
+    public StateStore addKey(String namedKey, boolean unique, Extractor extractor) {
         if (namedKey == null || namedKey.isBlank()) {
             throw new IllegalArgumentException("named key is required");
         }
@@ -83,8 +89,12 @@ public final class StateStore {
             throw new IllegalStateException(
                     "a StateStore declares at most " + MAX_NAMED_KEYS + " named keys");
         }
-        declaredKeys.add(new NamedKey(namedKey, unique));
+        declaredKeys.add(new NamedKey(namedKey, unique, extractor));
         return this;
+    }
+
+    public StateStore addKey(String namedKey, boolean unique) {
+        return addKey(namedKey, unique, null);
     }
 
     public StateStore addKey(String namedKey) {

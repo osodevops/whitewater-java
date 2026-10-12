@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.internal.Wire;
 import dev.whitewater.model.ControlExecution;
+import dev.whitewater.model.Extractor;
 
 import java.util.UUID;
 
@@ -23,18 +24,26 @@ public final class StateStoresClient {
     /**
      * Declare {@code spec} on the Control Plane and return it bound to
      * this client. {@code source} names a same-Domain Feed the store
-     * materializes from; null means a manual store (required when the
-     * spec declares named keys).
+     * materializes from; null means a manual store. Feed-sourced named
+     * keys must each declare an {@link Extractor} so replay can project
+     * typed values; extractors on a manual store are refused.
      */
     public StateStore define(StateStore spec, String source) {
         if (spec == null) {
             throw new IllegalArgumentException(
                     "define() takes a StateStore spec — use StateStore.named(name)");
         }
-        if (!spec.namedKeys().isEmpty() && source != null) {
+        if (source == null
+                && spec.namedKeys().stream().anyMatch(k -> k.extractor() != null)) {
             throw new IllegalArgumentException(
-                    "named keys require a manual StateStore until a declared "
-                            + "source-Feed projection exists");
+                    "named-key extractors apply to feed-sourced StateStores; "
+                            + "manual stores take named values on each put");
+        }
+        if (source != null
+                && spec.namedKeys().stream().anyMatch(k -> k.extractor() == null)) {
+            throw new IllegalArgumentException(
+                    "feed-sourced named keys require an extractor "
+                            + "(Extractor.recordKey()/metadata()/json())");
         }
         ObjectNode body = Transport.json().createObjectNode();
         body.put("request_id", UUID.randomUUID().toString());
@@ -54,6 +63,9 @@ public final class StateStoresClient {
             ObjectNode entry = Transport.json().createObjectNode();
             entry.put("name", key.name());
             entry.put("unique", key.unique());
+            if (key.extractor() != null) {
+                entry.set("extractor", key.extractor().toWire());
+            }
             namedKeys.add(entry);
         });
         commands.add(command);

@@ -3,6 +3,7 @@ package dev.whitewater;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpServer;
 import dev.whitewater.internal.Transport;
+import dev.whitewater.model.Extractor;
 import dev.whitewater.model.StoreRow;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -139,10 +140,38 @@ class StateStoreTest {
     }
 
     @Test
-    void defineRefusesNamedKeysOnAFeedSourcedStore() {
-        var spec = StateStore.named("accounts.src").addKey("k");
-        assertThrows(IllegalArgumentException.class,
-                () -> client.stateStores().define(spec, "accounts.events"));
+    void defineFeedSourcedNamedKeysNeedExtractors() {
+        // A feed-sourced named key without a projection is a declaration bug.
+        var bare = StateStore.named("accounts.src").addKey("k");
+        var refused = assertThrows(IllegalArgumentException.class,
+                () -> client.stateStores().define(bare, "accounts.events"));
+        assertTrue(refused.getMessage().contains("require an extractor"));
+
+        // An extractor on a manual store is refused — puts carry the values.
+        var manual = StateStore.named("accounts.m").addKey("k", false, Extractor.metadata("pp"));
+        var refusedManual = assertThrows(IllegalArgumentException.class,
+                () -> client.stateStores().define(manual, null));
+        assertTrue(refusedManual.getMessage().contains("manual stores"));
+    }
+
+    @Test
+    void defineFeedSourcedEmitsExtractors() throws Exception {
+        var spec = StateStore.named("accounts.tagged")
+                .addKey("passport", true, Extractor.metadata("pp"))
+                .addKey("department", false, Extractor.json("dept"));
+        client.stateStores().define(spec, "accounts.events");
+
+        JsonNode sent = lastBody("/v1/admin/commands").get("commands").get(0);
+        assertEquals("feed", sent.get("source").get("kind").asText());
+        assertEquals("accounts.events", sent.get("source").get("feed").asText());
+        JsonNode passport = sent.get("named_keys").get(0).get("extractor");
+        assertEquals("metadata", passport.get("kind").asText());
+        assertEquals("pp", passport.get("name").asText());
+        JsonNode department = sent.get("named_keys").get(1).get("extractor");
+        assertEquals("projection", department.get("kind").asText());
+        assertEquals("json", department.get("extractor").asText());
+        assertEquals(1, department.get("version").asInt());
+        assertEquals("dept", department.get("field").asText());
     }
 
     @Test
