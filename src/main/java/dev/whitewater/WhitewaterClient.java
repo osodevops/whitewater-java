@@ -282,6 +282,10 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** Lowercase dotted names: {@code ^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$}, ≤512 bytes. */
+    static String dottedName(String name) {
+        return dotted(name);
+    }
+
     private static String dotted(String name) {
         Objects.requireNonNull(name, "name is required");
         if (name.length() > 512 || name.startsWith(".") || name.endsWith(".")
@@ -337,9 +341,8 @@ public final class WhitewaterClient implements AutoCloseable {
      * Reader) through {@code onError}.
      *
      * <pre>{@code
-     * var store = RecordStore.named("employee-store");
      * try (var sub = client.subscribe("hr-view", "hr.employees",
-     *         ReaderStart.beginning(), store::putAll, Throwable::printStackTrace)) {
+     *         ReaderStart.beginning(), this::handle, Throwable::printStackTrace)) {
      *     Thread.sleep(Duration.ofDays(1));     // or just keep working
      * }
      * }</pre>
@@ -366,13 +369,16 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /**
-     * Bulk materialization of Feed history into a {@link RecordStore}:
-     * the {@code fromFeed} projection callback picks each row's primary
-     * key and named-key values via {@code store.upsert(record)}.
+     * A thin facade over the node-side StateStore {@code name} — rows
+     * live on the Nodes (RF3 + Fjall); this client holds no state.
      */
-    public LoadStore loadStore(dev.whitewater.model.RecordStore store) {
-        Objects.requireNonNull(store, "store");
-        return new LoadStore(this, store);
+    public StateStore stateStore(String name) {
+        return StateStore.bound(transport, name);
+    }
+
+    /** Collection-level StateStore operations: declare, drop. */
+    public StateStoresClient stateStores() {
+        return new StateStoresClient(transport);
     }
 
     @Override

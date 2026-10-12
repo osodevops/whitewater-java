@@ -151,4 +151,101 @@ public final class Wire {
         }
         return node;
     }
+
+    /**
+     * One typed StateStore/Index value for the wire: {@code null} -> null,
+     * {@link Boolean} -> bool, {@link Byte}/{@link Short}/{@link Integer}/
+     * {@link Long}/{@link java.math.BigInteger} -> i64, {@link String} ->
+     * text, {@code byte[]} -> bytes. Floats/doubles are refused — the wire
+     * carries exact i64/text/bytes.
+     */
+    public static JsonNode indexValue(Object value) {
+        ObjectNode node = Transport.json().createObjectNode();
+        if (value == null) {
+            node.put("kind", "null");
+        } else if (value instanceof Boolean bool) {
+            node.put("kind", "bool").put("value", bool);
+        } else if (value instanceof Byte || value instanceof Short
+                || value instanceof Integer || value instanceof Long) {
+            node.put("kind", "i64").put("value", ((Number) value).longValue());
+        } else if (value instanceof java.math.BigInteger big) {
+            node.put("kind", "i64").put("value", big.longValueExact());
+        } else if (value instanceof String text) {
+            node.put("kind", "text").put("value", text);
+        } else if (value instanceof byte[] bytes) {
+            node.put("kind", "bytes").put("value_base64", b64(bytes));
+        } else {
+            throw new IllegalArgumentException(
+                    "unsupported StateStore value type: " + value.getClass().getSimpleName());
+        }
+        return node;
+    }
+
+    /** {@code {department: "eng", composite: List.of(v1, v2)}} -> the mutation's named entries. */
+    public static com.fasterxml.jackson.databind.node.ArrayNode namedValues(Map<String, ?> named) {
+        var array = Transport.json().createArrayNode();
+        named.forEach((name, value) -> {
+            ObjectNode entry = Transport.json().createObjectNode();
+            entry.put("name", name);
+            var values = entry.putArray("values");
+            if (value instanceof List<?> list) {
+                list.forEach(component -> values.add(indexValue(component)));
+            } else {
+                values.add(indexValue(value));
+            }
+            array.add(entry);
+        });
+        return array;
+    }
+
+    public static MutationResult mutationResult(JsonNode node) {
+        return new MutationResult(
+                UUID.fromString(node.path("store_id").asText()),
+                UUID.fromString(node.path("mutation_id").asText()),
+                node.path("sequence").asLong(),
+                node.path("deduplicated").asBoolean(false));
+    }
+
+    public static StoreFreshness storeFreshness(JsonNode node) {
+        return new StoreFreshness(
+                node.path("applied_seq").asLong(),
+                node.path("committed_seq").asLong(),
+                node.path("behind").asBoolean(false),
+                node.path("served_by").asText());
+    }
+
+    public static StoreRow storeRow(JsonNode node, StoreFreshness freshness) {
+        JsonNode cursor = node.path("applied_cursor");
+        return new StoreRow(
+                b64(node.path("key_base64").asText()),
+                b64(node.path("payload_base64").asText()),
+                cursor.isNull() || cursor.isMissingNode() ? null : cursor.asText(),
+                freshness);
+    }
+
+    public static StoreRows storeRows(JsonNode node) {
+        StoreFreshness freshness = storeFreshness(node);
+        List<StoreRow> rows = new ArrayList<>();
+        JsonNode list = node.path("rows");
+        if (list.isArray()) {
+            list.forEach(item -> rows.add(storeRow(item, freshness)));
+        }
+        return new StoreRows(List.copyOf(rows), freshness);
+    }
+
+    public static StorePage storePage(JsonNode node) {
+        List<StoreRow> rows = new ArrayList<>();
+        JsonNode list = node.path("rows");
+        if (list.isArray()) {
+            list.forEach(item -> rows.add(storeRow(item, null)));
+        }
+        JsonNode next = node.path("next_key_base64");
+        return new StorePage(
+                List.copyOf(rows),
+                next.isNull() || next.isMissingNode() || next.asText().isEmpty()
+                        ? null
+                        : b64(next.asText()),
+                node.path("pinned_seq").asLong(),
+                node.path("served_by").asText());
+    }
 }

@@ -6,7 +6,6 @@ import dev.whitewater.internal.Transport;
 import dev.whitewater.model.Cursor;
 import dev.whitewater.model.FeedRecord;
 import dev.whitewater.model.ReaderStart;
-import dev.whitewater.model.RecordStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -157,17 +156,16 @@ class SubscribeLoadTest {
     }
 
     @Test
-    void loadPagesUntilEmptyAndFillsTheStore() throws Exception {
+    void loadPagesUntilEmptyAndDeliversEveryRecord() throws Exception {
         temporaryPages.add(temporaryPageJson("c1", "r1"));
         temporaryPages.add(temporaryPageJson("c2", "r2"));
         temporaryPages.add(temporaryPageJson(null));
 
-        var store = RecordStore.named("employee-store");
-        long loaded = client.feeds().load("hr.employees", ReaderStart.beginning(), store);
+        var sink = new CopyOnWriteArrayList<List<FeedRecord>>();
+        long loaded = client.feeds().load("hr.employees", ReaderStart.beginning(), sink::add);
 
         assertEquals(2, loaded);
-        assertEquals(2, store.size());
-        assertTrue(store.get("k-r1".getBytes(StandardCharsets.UTF_8)).isPresent());
+        assertEquals(2, sink.stream().mapToLong(List::size).sum());
         assertEquals(3, temporaryBodies().size());
         assertNull(firstBody().get("after"), "first page reads from the beginning");
         assertEquals("c1", bodyAt(1).get("after").asText(), "continues on next_cursor");
@@ -178,8 +176,8 @@ class SubscribeLoadTest {
         temporaryPages.add(temporaryPageJson("c1", "r1"));
         temporaryPages.add(temporaryPageJson(null));
 
-        var store = RecordStore.named("s");
-        client.feeds().load("hr.employees", ReaderStart.timestampNs(1697040000000000000L), store);
+        client.feeds().load("hr.employees", ReaderStart.timestampNs(1697040000000000000L),
+                records -> {});
 
         assertEquals("1697040000000000000", firstBody().get("after_event_time_ns").asText());
         assertFalse(firstBody().has("after"), "start seek never combines after+event time");
@@ -189,8 +187,7 @@ class SubscribeLoadTest {
     @Test
     void loadFromNowYieldsNothing() throws Exception {
         temporaryPages.add(temporaryPageJson("tip-9"));
-        var store = RecordStore.named("s");
-        assertEquals(0, client.feeds().load("hr.employees", ReaderStart.now(), store));
+        assertEquals(0, client.feeds().load("hr.employees", ReaderStart.now(), records -> {}));
         assertTrue(firstBody().get("new_only").asBoolean());
         assertEquals(1, temporaryBodies().size());
     }
@@ -267,70 +264,6 @@ class SubscribeLoadTest {
         } finally {
             refused.stop(0);
         }
-    }
-
-    @Test
-    void namedKeysIndexRowsNonUniquelyAndDeleteCleansPostings() throws Exception {
-        var store = RecordStore.named("employee-store").addKey("department");
-        var record = record("r1", "emp-1".getBytes());
-        var second = record("r2", "emp-2".getBytes());
-
-        store.upsert(record).withKey("emp-1").withNamedKey("department", "eng");
-        store.upsert(second).withKey("emp-2").withNamedKey("department", "eng");
-
-        var eng = store.get("department", "eng");
-        assertEquals(2, eng.size(), "named lookups are not unique");
-        assertEquals("r1", eng.get(0).cursor().value());
-        assertTrue(store.get("emp-1").isPresent());
-        assertThrows(IllegalArgumentException.class,
-                () -> store.get("undeclared", "x"), "undeclared named key refused");
-
-        assertTrue(store.delete("emp-1"));
-        assertEquals(1, store.get("department", "eng").size(),
-                "delete strips the row's named postings");
-        assertFalse(store.get("emp-1").isPresent());
-
-        store.clear();
-        assertEquals(0, store.size());
-        assertTrue(store.get("department", "eng").isEmpty());
-    }
-
-    @Test
-    void copyCarriesNamedPostingsAndForEachVisitsEveryRow() throws Exception {
-        var store = RecordStore.named("src").addKey("team");
-        store.upsert(record("r1", "a".getBytes())).withKey("a").withNamedKey("team", "t1");
-        store.upsert(record("r2", "b".getBytes())).withKey("b").withNamedKey("team", "t2");
-
-        var target = RecordStore.named("dst");
-        store.copy(target);
-
-        assertEquals(2, target.size());
-        assertEquals(List.of("team"), target.namedKeys(), "copy declares the named key");
-        assertEquals(1, target.get("team", "t1").size());
-
-        var seen = new java.util.concurrent.atomic.AtomicInteger();
-        store.forEachParallel(3, entry -> {
-            assertNotNull(entry.primaryKey());
-            assertNotNull(entry.record());
-            seen.incrementAndGet();
-        });
-        assertEquals(2, seen.get());
-    }
-
-    @Test
-    void loadStoreProjectsRowsThroughTheUpsertCallback() throws Exception {
-        temporaryPages.add(temporaryPageJson("c1", "r1"));
-        temporaryPages.add(temporaryPageJson(null));
-
-        var store = RecordStore.named("employee-store").addKey("department");
-        long loaded = client.loadStore(store).fromFeed(
-                "hr.employees", ReaderStart.beginning(),
-                (s, record) -> s.upsert(record)
-                        .withKey(record.key())
-                        .withNamedKey("department", "eng"));
-
-        assertEquals(1, loaded);
-        assertEquals(1, store.get("department", "eng").size());
     }
 
     private JsonNode firstBody() throws IOException {

@@ -9,7 +9,6 @@ import dev.whitewater.model.Cursor;
 import dev.whitewater.model.FeedAppend;
 import dev.whitewater.model.FeedRecord;
 import dev.whitewater.model.ReaderStart;
-import dev.whitewater.model.RecordStore;
 import dev.whitewater.model.TemporaryFetchOptions;
 import dev.whitewater.model.TemporaryFetchPage;
 
@@ -120,12 +119,6 @@ public final class FeedClient {
             loaded += page.records().size();
             options = TemporaryFetchOptions.page(page.nextCursor(), LOAD_PAGE);
         }
-    }
-
-    /** {@code load} that materializes records into a {@link RecordStore}. */
-    public long load(String feed, ReaderStart start, RecordStore store) {
-        Objects.requireNonNull(store, "store");
-        return load(feed, start, store::putAll);
     }
 
     private static TemporaryFetchOptions firstPage(ReaderStart start) {

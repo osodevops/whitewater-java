@@ -1,151 +1,116 @@
-# RecordStore and loadStore — coding guide
+# StateStore — coding guide
 
-A `RecordStore` is a named, thread-safe, in-memory projection of Feed
-records. You fill it once with `loadStore` (bulk history) and keep it
-warm with `subscribe` (live tail) — the Whitewater equivalent of a local
-materialized view.
-
-## Store anatomy
-
-Two structures per store:
-
-- **Primary map** — `primary key -> FeedRecord`. One row per key; a new
-  row for an existing key replaces it.
-- **Named-key posting maps** — one per declared named key, conceptually
-  `employee-store.passport`: `named value -> set of primary keys`.
-  Named keys are **not unique** — many rows may share one named value,
-  so lookups return a list.
+There is exactly one store: the **node-side StateStore** — durable,
+RF3-replicated, Fjall-backed, and queryable from any Node. The SDK's
+`StateStore` is a thin facade over it: it holds no rows, keeps no local
+projection, and every operation is an HTTP call with freshness evidence.
 
 ```java
-var store = RecordStore.named("employee-store")
-        .addKey("passport")          // declare before use
-        .addKey("department");       // at most RecordStore.MAX_NAMED_KEYS (10)
+var spec = StateStore.named("accounts.employees")
+        .addKey("passport", true)            // unique: one row per value
+        .addKey("department", false);        // non-unique: value -> many rows
+
+var store = client.stateStores().define(spec, null);   // manual store
+// or a bound facade for an already-declared store:
+var same = client.stateStore("accounts.employees");
 ```
 
-`addKey` returns the store for chaining. Adding an eleventh named key
-throws `IllegalStateException`; blank names throw
-`IllegalArgumentException`.
+`addKey` records declaration intent used by `define` — named keys are
+declared at creation; at most `StateStore.MAX_NAMED_KEYS` (10). Adding a
+key to an existing store has no effect server-side.
 
-## Loading history: `client.loadStore(store).fromFeed(...)`
+## Writing
 
 ```java
-long loaded = client.loadStore(store).fromFeed(
-        "hr.employees",
-        ReaderStart.beginning(),            // or .now(), .cursor(c), .timestampNs(ns)
-        (s, record) -> s.upsert(record)
-                .withKey(record.key())                          // primary key
-                .withNamedKey("passport", record.metadata()
-                        .getOrDefault("pp", new byte[0]))
-                .withNamedKey("department", "eng".getBytes())); // String overloads too
+store.put("user-1".getBytes(), "profile-1".getBytes(), Map.of(
+        "passport", "P111",
+        "department", "eng",
+        "salary", 92000L,
+        "active", true,
+        "badge", new byte[]{1, 2},
+        "note", null), null);               // null mutationId -> generated
+store.delete("user-1".getBytes());          // mutationId auto-generated
+store.delete("user-1".getBytes(), stableMutationUuid);
 ```
 
-Semantics, in order:
+- `put` commits one journaled `put_row` through the store's RF3 quorum
+  and returns a `MutationResult(storeId, mutationId, sequence, deduplicated)`.
+- Named values are **typed**: `String` -> text, `Byte`/`Short`/`Integer`/
+  `Long`/`BigInteger` -> i64, `Boolean` -> bool, `byte[]` -> bytes,
+  `null` -> null. A `List` value carries one typed value per posting
+  component. `Float`/`Double` are refused — the wire carries exact
+  i64/text/bytes.
+- Named values must match the store's declared keys — the server
+  refuses undeclared names. `unique` claims arbitrate
+  first-committed-wins by journal order.
+- `mutationId` is the idempotency identity: retry a timed-out `put` with
+  the same ID and it dedupes; reuse it with different contents and it
+  conflicts.
 
-1. Pages `temporaryFetch` from `start` until the frontier is drained —
-   this is a **one-shot bounded read**, not a tail.
-2. For every record, the projection callback runs `store.upsert(record)`.
-3. `withKey(bytes)` chooses the primary key. Defaults to `record.key()`;
-   call it with anything — e.g. a composite `"dept:emp-1"` — and the row
-   re-keys (old postings are stripped first). `withKey(String)` is UTF-8.
-4. `withNamedKey(name, bytes)` attaches one named-key value; call it
-   once per declared key you want indexed. Passing an **undeclared**
-   named key throws `IllegalArgumentException` immediately — a projection
-   bug fails the load, never silently writes an unindexed row.
-5. Returns the count of records read (not rows written — a re-key or a
-   second append under the same key replaces, not duplicates).
-
-Skip `withNamedKey` entirely and the row lands in the primary map only —
-still fully readable, just not indexable by that named key.
-
-The lighter `feeds().load(feed, start, sink)` remains for "dump history
-into a store or callback" with no projection; `sink` may be the store
-itself (rows key on `record.key`, cursor fallback for unkeyed records)
-or any `Consumer<List<FeedRecord>>`.
-
-## Keeping the store warm: `subscribe`
+## Reading
 
 ```java
-try (var sub = client.subscribe("hr-view", "hr.employees",
-        ReaderStart.now(),                          // only new records
-        records -> {                                // invoked per fetched page
-            for (var r : records) {
-                store.upsert(r)
-                        .withKey(r.key())
-                        .withNamedKey("department", r.metadata()
-                                .getOrDefault("department", new byte[0]));
-            }
-        },
-        error -> System.err.println("subscription ended: " + error))) {
-    // The loop runs on a non-daemon background thread — the JVM stays up.
-    mainWork();
-}                                                   // close() stops the loop
+var row = store.get("user-1".getBytes(), false, null);      // StoreRow | null
+row.payload();                                             // byte[]
+row.freshness();            // appliedSeq / committedSeq / behind / servedBy
+
+var result = store.getBy("department", "eng", null, false, null);
+result.rows();                            // List<StoreRow> — every match
+result.freshness().servedBy();            // which Node answered
 ```
 
-Delivery is **at-least-once**: records land in the callback, then the
-loop acks `deliveredCursor`. A crash between callback and ack replays —
-make the projection idempotent (upsert semantics already are).
+`getBy` is the group/list lookup: one non-unique named value resolves
+to **every** primary row carrying it. `strict` + `waitMs` bounded-waits
+for the serving replica to apply its committed frontier rather than
+answering stale; non-strict reads still report `freshness().behind()`
+honestly.
 
-## Reading the store
+## Iterating
 
 ```java
-store.get("emp-1");                       // Optional<FeedRecord> by primary key
-store.get(empBytes);                      // byte[] overload
-store.get("passport", "P123");            // List<FeedRecord> — all rows matching
-store.get("passport", ppBytes);           // byte[] overload
-store.get("undeclared", "x");             // throws IllegalArgumentException
-store.size();                             // row count
-store.namedKeys();                        // declared keys, in order
-store.name();                             // "employee-store"
-store.forEach(e -> export(e.record()));   // stable snapshot iteration
-for (var e : store) { /* e.primaryKey(), e.record() */ }
+store.iterate(256, row -> export(row));
+
+var page = store.page(afterKey, 256);       // one bounded page
+page.nextKey();                             // continuation, or null
+page.pinnedSeq();                           // journal position pinned to
 ```
 
-## Mutating outside a load
+`iterate`/`page` ride `/v1/state-stores/iterate` — the same bounded,
+key-ordered row set replica catch-up serves — so `pinnedSeq` is the
+iteration's freshness evidence.
+
+## Lifecycle
 
 ```java
-store.put(record);                        // primary-key upsert, no named keys
-store.putAll(page.records());             // subscribe-ready sink shape
-store.upsert(record).withKey("custom");   // same builder as projections
-store.delete("emp-1");                    // removes row + all its postings
-store.clear();                            // empties everything
+store.clear(null);                          // one journaled ClearAll
+store.drop();                               // or client.stateStores().drop(name)
 ```
 
-`delete` and `clear` strip named-key postings too — a deleted row never
-lingers in a `get(namedKey, value)` result.
+- `clear` empties the store as one durable, idempotent mutation;
+  replicas sweep rows and postings in bounded batches.
+- `drop` tombstones the definition — the name cannot be recreated and
+  every data path refuses. Rows already applied on replicas remain
+  until a bounded reclaim pass.
+- Feed-sourced stores: `client.stateStores().define(spec, "accounts.events")`
+  materializes committed Feed history; named keys require a manual
+  store until declared projections exist.
 
-## Copying and parallel work
+## What a StateStore facade is **not**
 
-```java
-var replica = RecordStore.named("employee-backup");
-store.copy(replica);                      // rows + named postings; declares
-                                          // missing keys on the target
-store.forEachParallel(3, entry -> rebuild(entry));
-```
+- **Not a local store** — there is no in-process copy to drift from
+  the Nodes. Every read goes to a replica; freshness evidence tells
+  you how current it was.
+- **Not unique on non-unique keys** — `getBy` always returns a list.
 
-`forEachParallel` fans a stable snapshot across a fixed thread pool —
-chunked, all tasks joined before returning. `threads <= 0` throws
-`IllegalArgumentException`; a worker's exception surfaces as
-`RuntimeException` wrapping the cause. Use it for CPU or blocking work —
-not for another `put` into the same store (writes are already
-thread-safe, but you don't need the pool).
-
-## Error handling reference
+## Errors
 
 | Where | Type | Meaning / remedy |
 |---|---|---|
-| `addKey` #11 | `IllegalStateException` | Store key budget (10) exceeded — declare fewer keys. |
-| `addKey`/`get`/`withNamedKey` undeclared or blank | `IllegalArgumentException` | Programming error — declare the key or fix the name. |
-| `loadStore` mid-read | `WhitewaterException` (usually `Unavailable`) | Transport refused a page; retry the whole `fromFeed` call — re-upserts are idempotent. |
-| `subscribe` transient | retried internally | `Unavailable`/`AmbiguousResult` backoff inside the loop. |
-| `subscribe` terminal | `onError` + `subscription.failure()` | `StaleSession` (another client opened your Reader — pick a unique name or take over deliberately), `Refused`, `Conflict`. The loop is dead; inspect, fix, re-subscribe. |
-
-All `WhitewaterException` subtypes carry `status()` and `code()`.
-
-## What a RecordStore is **not**
-
-- **Not durable** — it dies with the process. Rebuild is cheap:
-  `loadStore` from `ReaderStart.beginning()` (or a snapshot Cursor).
-- **Not a server StateStore** — the server-side replicated store model
-  is a separate, later seam. This is the client-side projection.
-- **Not unique on named keys** — `get(namedKey, value)` always returns a
-  list, even when it happens to hold one row.
+| `addKey` #11 / duplicate / blank | `IllegalStateException` / `IllegalArgumentException` | Declaration contract (10-key bound, distinct names). |
+| `define` spec + `source` + named keys | `IllegalArgumentException` | Named keys need a manual store — checked before the call. |
+| Data op on unbound spec | `IllegalStateException` | `StateStore.named` builds a spec; bind via `define` or `client.stateStore(name)`. |
+| `Float`/`Double` named value | `IllegalArgumentException` | The wire carries exact i64 — pass an integral type. |
+| Undeclared named key / missing store | `WhitewaterException` 400 | Server-side contract — fix the declaration. |
+| `mutationId` reused differently | `WhitewaterException` 409 | Retry with the original contents or a fresh ID. |
+| No quorum / replica down | `WhitewaterException` 503 | Retry — the journal needs a quorum to commit. |
+| `strict` read can't catch up | `WhitewaterException` 409 `index_behind` | Bounded wait expired; retry or drop `strict`. |
