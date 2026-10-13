@@ -136,7 +136,8 @@ class ConformanceRunnerIT {
             }
             case "writer.append" -> {
                 var writer = activeClient.writer(
-                        args.get("writer").asText(), args.path("session_epoch").asLong());
+                        args.get("writer").asText(), args.path("session_epoch").asLong())
+                        .useCompression(args.path("use_compression").asBoolean());
                 var metadata = decodeMetadata(args.path("metadata"));
                 var result = writer.append(new dev.whitewater.WriterSessionClient.Append(
                         UUID.fromString(args.get("request_id").asText()),
@@ -161,7 +162,8 @@ class ConformanceRunnerIT {
                 }
                 var writer = activeClient.writer(
                         records.get(0).get("writer").asText(),
-                        records.get(0).path("session_epoch").asLong());
+                        records.get(0).path("session_epoch").asLong())
+                        .useCompression(args.path("use_compression").asBoolean());
                 var batch = writer.appendBatch(appends);
                 var node = Transport.json().createObjectNode();
                 node.set("results", toJson(batch.results()));
@@ -274,7 +276,8 @@ class ConformanceRunnerIT {
                         decodeBytes(args.get("payload")),
                         args.hasNonNull("event_time_ns") ? args.get("event_time_ns").asLong() : null,
                         decodeMetadata(args.path("metadata")));
-                yield toJson(activeClient.feeds().append(args.get("feed").asText(), record));
+                yield toJson(activeClient.feeds().useCompression(args.path("use_compression").asBoolean())
+                        .append(args.get("feed").asText(), record));
             }
             case "reader.temporary_fetch" -> {
                 var options = new dev.whitewater.model.TemporaryFetchOptions(

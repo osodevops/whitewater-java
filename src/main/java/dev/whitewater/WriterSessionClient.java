@@ -43,12 +43,26 @@ public final class WriterSessionClient {
     private final Executor executor;
     private final String writer;
     private final long sessionEpoch;
+    private final boolean compression;
 
     WriterSessionClient(Transport transport, Executor executor, String writer, long sessionEpoch) {
+        this(transport, executor, writer, sessionEpoch, false);
+    }
+
+    private WriterSessionClient(Transport transport, Executor executor, String writer, long sessionEpoch, boolean compression) {
         this.transport = transport;
         this.executor = executor;
         this.writer = Objects.requireNonNull(writer);
         this.sessionEpoch = sessionEpoch;
+        this.compression = compression;
+    }
+
+    public WriterSessionClient useCompression() {
+        return useCompression(true);
+    }
+
+    public WriterSessionClient useCompression(boolean enabled) {
+        return new WriterSessionClient(transport, executor, writer, sessionEpoch, enabled);
     }
 
     public String writer() {
@@ -66,9 +80,7 @@ public final class WriterSessionClient {
 
     /** Append one record with event time and Metadata. */
     public AppendResult append(Append record) {
-        JsonNode body = Wire.appendRequest(
-                record.requestId(), writer, sessionEpoch,
-                record.key(), record.payload(), record.eventTimeNs(), record.metadata());
+        JsonNode body = appendRequest(record);
         return Wire.appendResult(transport.post("/v1/writers/append", body));
     }
 
@@ -76,9 +88,7 @@ public final class WriterSessionClient {
     public BatchResult appendBatch(List<Append> records) {
         ArrayNode array = Transport.json().createArrayNode();
         for (Append record : records) {
-            array.add(Wire.appendRequest(
-                    record.requestId(), writer, sessionEpoch,
-                    record.key(), record.payload(), record.eventTimeNs(), record.metadata()));
+            array.add(appendRequest(record));
         }
         var body = Transport.json().createObjectNode();
         body.set("records", array);
@@ -86,6 +96,15 @@ public final class WriterSessionClient {
         List<AppendResult> results = new ArrayList<>(response.path("results").size());
         response.path("results").forEach(node -> results.add(Wire.appendResult(node)));
         return new BatchResult(List.copyOf(results), Wire.feedback(response.path("feedback")));
+    }
+
+    private JsonNode appendRequest(Append record) {
+        var body = Wire.appendRequest(record.requestId(), writer, sessionEpoch,
+                record.key(), record.payload(), record.eventTimeNs(), record.metadata());
+        if (compression) {
+            body.put("use_compression", true);
+        }
+        return body;
     }
 
     public CompletableFuture<AppendResult> appendAsync(UUID requestId, byte[] key, byte[] payload) {

@@ -169,6 +169,39 @@ class FeedClientTest {
     }
 
     @Test
+    void compressionCanBeToggledForFeedAndWriterWithoutChangingPayload() throws Exception {
+        String result = "{\"message_id\":\"019a0000-0000-7000-8000-0000000000aa\",\"cursor\":\"c\",\"deduplicated\":false}";
+        cannedResponse = result;
+        FeedClient feeds = client.feeds();
+        UUID writerId = UUID.randomUUID();
+        var record = new FeedAppend(UUID.randomUUID(), writerId, 1, 1, new byte[]{1}, new byte[]{0, (byte) 255}, null, Map.of());
+        for (boolean enabled : new boolean[]{false, true, false, true}) {
+            feeds = feeds.useCompression(enabled);
+            feeds.append("orders.created", record);
+            JsonNode body = Transport.json().readTree(capturedBody);
+            assertEquals(enabled, body.path("use_compression").asBoolean());
+            assertEquals("AP8=", body.path("payload_base64").asText());
+            assertEquals(record.requestId().toString(), body.path("request_id").asText());
+        }
+        client.feeds().append("orders.created", record);
+        assertFalse(Transport.json().readTree(capturedBody).has("use_compression"));
+        WriterSessionClient writer = client.writer("orders.writer", 7);
+        var append = new WriterSessionClient.Append(record.requestId(), record.key(), record.payload());
+        for (boolean enabled : new boolean[]{false, true, false}) {
+            writer = writer.useCompression(enabled);
+            cannedResponse = result;
+            writer.append(append);
+            assertEquals(enabled, Transport.json().readTree(capturedBody).path("use_compression").asBoolean());
+            cannedResponse = "{\"results\":[" + result + "],\"feedback\":{}}";
+            writer.appendBatch(List.of(append));
+            JsonNode body = Transport.json().readTree(capturedBody).path("records").get(0);
+            assertEquals(enabled, body.path("use_compression").asBoolean());
+            assertEquals("AP8=", body.path("payload_base64").asText());
+            assertEquals(7, body.path("session_epoch").asLong());
+        }
+    }
+
+    @Test
     void commandsPostTypedCommandArray() throws Exception {
         cannedResponse = """
                 {"request_id": "019a0000-0000-7000-8000-0000000000dd",

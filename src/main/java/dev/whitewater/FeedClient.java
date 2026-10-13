@@ -34,10 +34,24 @@ public final class FeedClient {
 
     private final Transport transport;
     private final Executor executor;
+    private final boolean compression;
 
     FeedClient(Transport transport, Executor executor) {
+        this(transport, executor, false);
+    }
+
+    private FeedClient(Transport transport, Executor executor, boolean compression) {
         this.transport = transport;
         this.executor = executor;
+        this.compression = compression;
+    }
+
+    public FeedClient useCompression() {
+        return useCompression(true);
+    }
+
+    public FeedClient useCompression(boolean enabled) {
+        return new FeedClient(transport, executor, enabled);
     }
 
     /**
@@ -138,8 +152,11 @@ public final class FeedClient {
     public AppendResult append(String feed, FeedAppend record) {
         Objects.requireNonNull(feed, "feed");
         Objects.requireNonNull(record, "record");
-        return Wire.appendResult(transport.post(
-                "/v1/feeds/append", Wire.feedAppendRequest(feed, record)));
+        ObjectNode body = Wire.feedAppendRequest(feed, record);
+        if (compression) {
+            body.put("use_compression", true);
+        }
+        return Wire.appendResult(transport.post("/v1/feeds/append", body));
     }
 
     /** Convenience single-record append. */
