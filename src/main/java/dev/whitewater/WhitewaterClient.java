@@ -343,13 +343,9 @@ public final class WhitewaterClient implements AutoCloseable {
         return name;
     }
 
-    /** Single-segment resource names (writers, readers, subscriptions, roles). */
+    /** Every resource kind validates against the same dotted grammar. */
     private static String resource(String name) {
-        Objects.requireNonNull(name, "name is required");
-        if (!name.matches("[A-Za-z][A-Za-z0-9_-]{0,127}")) {
-            throw new IllegalArgumentException("invalid resource name: " + name);
-        }
-        return name;
+        return dotted(name);
     }
 
     /** Ad-hoc Feed operations: committed reads, temporary fetches, appends. */

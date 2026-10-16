@@ -198,7 +198,7 @@ class SubscribeLoadTest {
         var delivered = new CountDownLatch(1);
         var batches = new CopyOnWriteArrayList<List<FeedRecord>>();
 
-        var sub = client.subscribe("hr-view", "hr.employees", ReaderStart.beginning(),
+        var sub = client.subscribe("hr.view", "hr.employees", ReaderStart.beginning(),
                 records -> {
                     batches.add(records);
                     delivered.countDown();
@@ -234,7 +234,7 @@ class SubscribeLoadTest {
             int status = 200;
             if (path.equals("/v1/admin/wcl")) {
                 status = 400;
-                response = "{\"error\": \"Reader hr-view already exists\"}";
+                response = "{\"error\": \"Reader hr.view already exists\"}";
             } else if (path.equals("/v1/readers/open")) {
                 status = 400;
                 response = "{\"error\": \"stale session epoch\", \"code\": \"stale_epoch\"}";
@@ -252,7 +252,7 @@ class SubscribeLoadTest {
                     .endpoints(URI.create("http://127.0.0.1:" + refused.getAddress().getPort()))
                     .apiKey("test-key")
                     .build();
-            var sub = refusedClient.subscribe("hr-view", "hr.employees", ReaderStart.now(),
+            var sub = refusedClient.subscribe("hr.view", "hr.employees", ReaderStart.now(),
                     records -> {}, error -> {
                         errors.add(error);
                         staleLatch.countDown();

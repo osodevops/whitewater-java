@@ -95,13 +95,9 @@ public final class Commands {
         return name;
     }
 
-    /** Single-segment resource names: Writers, Readers, Subscriptions, Roles. */
+    /** Resource names use the same dotted grammar the server validates. */
     public static String resource(String name) {
-        Objects.requireNonNull(name, "name is required");
-        if (!name.matches("[A-Za-z][A-Za-z0-9_-]{0,127}")) {
-            throw new IllegalArgumentException("invalid resource name: " + name);
-        }
-        return name;
+        return dotted(name);
     }
 
     // ---- resources ----------------------------------------------------------

@@ -44,7 +44,7 @@ class CommandsTest {
                 .createFeed("orders.events")
                 .createWriter("ingest", "orders.events")
                 .createReader("audit", "orders.events")
-                .createSubscription("audit-sub", "orders.events")
+                .createSubscription("audit.sub", "orders.events")
                 .createRole("auditor");
         List<JsonNode> commands = batch.build();
         assertEquals(6, commands.size());
@@ -93,6 +93,28 @@ class CommandsTest {
         assertEquals("create_subscription", command.path("command").asText());
         assertEquals("orders", command.path("domain").asText());
         assertFalse(command.hasNonNull("feed"));
+    }
+
+    @Test
+    void everyResourceKindValidatesTheDottedGrammar() {
+        // The server runs validate_dotted_name on writers, readers,
+        // subscriptions, roles, pipes, indexes, and stores alike — the
+        // client must refuse the loose single-segment spellings early.
+        assertThrows(IllegalArgumentException.class,
+                () -> Commands.of().createWriter("ingest-1", "orders.events"));
+        assertThrows(IllegalArgumentException.class,
+                () -> Commands.of().createSubscription("Audit.Sub", "orders.events"));
+        assertThrows(IllegalArgumentException.class,
+                () -> Commands.of().pausePipe("audit_relay"));
+        assertThrows(IllegalArgumentException.class,
+                () -> Commands.of().createRole("ROLE_admin"));
+        // Dotted multi-segment spellings are valid on every kind.
+        var batch = Commands.of()
+                .createWriter("orders.ingest", "orders.events")
+                .createSubscription("orders.audit.sub", "orders.events")
+                .defineForwardPipe("orders.audit.relay", "orders.audit.sub", "orders.archive")
+                .createRole("auditors.emea");
+        assertEquals(4, batch.build().size());
     }
 
     @Test
