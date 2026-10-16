@@ -82,15 +82,22 @@ store.delete("emp-1", stableMutationUuid);
 var row = store.get("emp-1");                       // StoreRow<String, Employee> | null
 Employee alice = row.payload();                      // decoded — never getBytes
 String id = row.key();                               // decoded too
-row.freshness();                                     // appliedSeq / committedSeq / behind / servedBy
 
-var fresh = store.getStrict("emp-1");               // bounded-waits for the committed frontier
-var bounded = store.getStrict("emp-1", Duration.ofSeconds(5));
+var later = row.refresh();                           // re-reads the same key — fast path
+var latest = row.refreshStrict(Duration.ofSeconds(5)); // bounded-waits for the frontier
+// both return null when the row was deleted meanwhile
+
+var fresh = store.getStrict("emp-1");               // same bound, when you hold a key not a row
 
 var result = store.getBy("department", "eng");
-result.rows();                                       // every match
+result.rows();                                       // every match — each row refresh()es too
 result.freshness().servedBy();                       // which Node answered
 ```
+
+`freshness()` is **evidence, not a required step**: appliedSeq /
+committedSeq / `behind` report whether the serving replica answered
+behind its committed frontier, and `servedBy` names it — the handles you
+want when a read looks stale. Ignore it when you don't.
 
 `getBy` is the group/list lookup: one non-unique named value resolves
 to **every** primary row carrying it. `get` is the fast path — it reads
@@ -191,6 +198,7 @@ client.commands(Commands.of().defineStateStore(
 | `define` spec + `source` + bare named keys | `IllegalArgumentException` | Feed-sourced keys need an `Extractor` — checked before the call. |
 | `define` manual spec + `Extractor` | `IllegalArgumentException` | Extractors apply to feed-sourced stores only. |
 | Codec decode of a foreign payload | `IllegalArgumentException` | The stored bytes aren't your type — bind the matching `Codec` or `bytes()`. |
+| `row.refresh()` on a detached row | `IllegalStateException` | Only store-produced rows re-read — hand-built rows have no store to call. |
 | `Float`/`Double` named value | `IllegalArgumentException` | The wire carries exact i64 — pass an integral type. |
 | Undeclared named key / missing store | `WhitewaterException` 400 | Server-side contract — fix the declaration. |
 | `mutationId` reused differently | `WhitewaterException` 409 | Retry with the original contents or a fresh ID. |

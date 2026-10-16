@@ -41,6 +41,7 @@ import java.util.function.Consumer;
  *         Map.of("passport", "P111", "department", "eng"));
  * var row = store.get("user-1");                       // StoreRow<String, Employee> | null
  * Employee alice = row.payload();                       // decoded — never getBytes
+ * var later = row.refresh();                            // re-reads the same key
  * var eng = store.getBy("department", "eng");           // every match
  * store.iterate(r -> export(r));
  * }</pre>
@@ -140,6 +141,15 @@ public final class StateStore<K, V> {
      * answering stale.
      */
     public StoreRow<K, V> get(K key, boolean strict, Long waitMs) {
+        return load(key, strict, waitMs);
+    }
+
+    /**
+     * The primary-key read every row's {@link StoreRow#refresh()}
+     * re-issues — binding the row back here is what lets
+     * {@code row.refresh()} work without the caller holding the store.
+     */
+    private StoreRow<K, V> load(K key, boolean strict, Long waitMs) {
         Objects.requireNonNull(key, "key");
         ObjectNode body = Transport.json().createObjectNode();
         body.put("store", name);
@@ -159,7 +169,8 @@ public final class StateStore<K, V> {
                 appliedCursor.isNull() || appliedCursor.isMissingNode()
                         ? null
                         : appliedCursor.asText(),
-                Wire.storeFreshness(response));
+                Wire.storeFreshness(response),
+                this::load);
     }
 
     /**
@@ -350,7 +361,8 @@ public final class StateStore<K, V> {
                 keyCodec.decode(row.key()),
                 payloadCodec.decode(row.payload()),
                 row.appliedCursor(),
-                row.freshness());
+                row.freshness(),
+                this::load);
     }
 
     private StoreRows<K, V> typed(StoreRows<byte[], byte[]> rows) {
