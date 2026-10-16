@@ -33,19 +33,23 @@ WhitewaterClient client = WhitewaterClient.builder()
 | `client.queryIndex(name, predicate)` | `exact` / `prefix` / `range` reads against an activated Index generation, with applied-vs-target freshness evidence |
 | `client.feeds()` | Committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends, `load(feed, start, sink)` one-shot history reads |
 | `client.subscribe(reader, feed, start, onRecords)` | Managed durable consume: provisions the Reader, runs open → fetch → deliver → ack on a background thread; `Subscription.close()` to stop |
-| `client.stateStore(name)` / `client.stateStores()` | Server-side StateStore facade — durable RF3 rows on the Nodes: `put`/`get`/`getBy` (named keys, bounded)/`iterate`/`delete`/`clear`/`drop`/`sync()`/`rebuild()` |
+| `client.stateStore(name[, codec])` / `client.stateStores()` | Typed server-side StateStore facade — durable RF3 rows on the Nodes, keys/payloads serialized through bound `Codec`s (String keys + `byte[]` payloads by default): `put`/`get`/`getBy`/`iterate`/`delete`/`clear`/`drop`/`sync()`/`rebuild()` |
 | `client.health()` / `client.checkCompatible()` | Liveness plus the protocol block (`major`/`minor`) and advertised transport limits; `checkCompatible()` refuses a major-version mismatch |
 
 ```java
-var spec = StateStore.named("accounts.employees")
+var spec = StateStoreSpec.named("accounts.employees")
         .addKey("passport", true).addKey("department", false);          // up to 10 named keys
 var store = client.stateStores().define(spec, null);                    // durable store on the Nodes
 
-store.put("emp-1".getBytes(), payload, Map.of("passport", "P123", "department", "eng"), null);
-var row = store.get("emp-1".getBytes(), false, null);     // StoreRow | null + freshness
-var rows = store.getBy("passport", "P123", null, false, null); // named key — a list
-store.iterate(256, r -> export(r));
+store.put("emp-1", payload, Map.of("passport", "P123", "department", "eng"));
+var row = store.get("emp-1");                          // StoreRow | null + freshness
+var rows = store.getBy("passport", "P123");            // named key — a list
+store.iterate(r -> export(r));
 ```
+
+`client.stateStore(name)` binds String keys + `byte[]` payloads by
+default; `client.stateStore(name, Codecs.json(Employee.class))` puts and
+reads back your own objects — no `getBytes()` in application code.
 
 The store lives on the Nodes — the SDK holds no local copy. See
 [docs/stores.md](docs/stores.md) for the full store guide.

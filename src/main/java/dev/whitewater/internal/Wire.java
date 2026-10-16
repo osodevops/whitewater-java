@@ -214,23 +214,23 @@ public final class Wire {
                 node.path("served_by").asText());
     }
 
-    public static StoreRow storeRow(JsonNode node, StoreFreshness freshness) {
+    public static StoreRow<byte[], byte[]> storeRow(JsonNode node, StoreFreshness freshness) {
         JsonNode cursor = node.path("applied_cursor");
-        return new StoreRow(
+        return new StoreRow<>(
                 b64(node.path("key_base64").asText()),
                 b64(node.path("payload_base64").asText()),
                 cursor.isNull() || cursor.isMissingNode() ? null : cursor.asText(),
                 freshness);
     }
 
-    public static StoreRows storeRows(JsonNode node) {
+    public static StoreRows<byte[], byte[]> storeRows(JsonNode node) {
         StoreFreshness freshness = storeFreshness(node);
-        List<StoreRow> rows = new ArrayList<>();
+        List<StoreRow<byte[], byte[]>> rows = new ArrayList<>();
         JsonNode list = node.path("rows");
         if (list.isArray()) {
             list.forEach(item -> rows.add(storeRow(item, freshness)));
         }
-        return new StoreRows(List.copyOf(rows), freshness);
+        return new StoreRows<>(List.copyOf(rows), freshness);
     }
 
     public static Health health(JsonNode node) {
@@ -308,14 +308,14 @@ public final class Wire {
                 node.path("complete").asBoolean(false));
     }
 
-    public static StorePage storePage(JsonNode node) {
-        List<StoreRow> rows = new ArrayList<>();
+    public static StorePage<byte[], byte[]> storePage(JsonNode node) {
+        List<StoreRow<byte[], byte[]>> rows = new ArrayList<>();
         JsonNode list = node.path("rows");
         if (list.isArray()) {
             list.forEach(item -> rows.add(storeRow(item, null)));
         }
         JsonNode next = node.path("next_key_base64");
-        return new StorePage(
+        return new StorePage<>(
                 List.copyOf(rows),
                 next.isNull() || next.isMissingNode() || next.asText().isEmpty()
                         ? null

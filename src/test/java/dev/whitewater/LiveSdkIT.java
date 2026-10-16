@@ -2,6 +2,7 @@ package dev.whitewater;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.whitewater.admin.Commands;
+import dev.whitewater.model.Codecs;
 import dev.whitewater.model.IndexPredicate;
 import dev.whitewater.model.IndexPredicate.IndexBound;
 import dev.whitewater.model.ReaderStart;
@@ -116,10 +117,9 @@ class LiveSdkIT {
                 var page = boundReader.fetch(16);
                 assertEquals(1, page.records().size(), "page: " + page);
                 var record = page.records().get(0);
-                assertArrayEquals("order-42".getBytes(StandardCharsets.UTF_8), record.key());
+                assertEquals("order-42", record.keyText());
                 assertEquals(1_700_000_000_000_000_001L, record.eventTimeNs());
-                assertArrayEquals("sdk-live".getBytes(StandardCharsets.UTF_8),
-                        record.metadata().get("source"));
+                assertEquals("sdk-live", record.metadataText("source"));
                 boundReader.ack();
                 assertEquals(page.deliveredCursor(), boundReader.acknowledgedCursor(),
                         "the page's delivered cursor is the durable restart point");
@@ -195,30 +195,26 @@ class LiveSdkIT {
 
             // Manual StateStore: put → strict lookup → named get_by →
             // iterate → delete → clear; identical mutation replay dedupes.
-            var storeApi = client.stateStore(store);
+            // The typed facade takes String keys/payloads — no byte plumbing.
+            StateStore<String, String> storeApi = client.stateStore(store, Codecs.utf8());
             UUID mutation = UUID.randomUUID();
-            var outcome = storeApi.put(
-                    "acct-1".getBytes(StandardCharsets.UTF_8),
-                    "{\"tier\":\"gold\"}".getBytes(StandardCharsets.UTF_8),
+            var outcome = storeApi.put("acct-1", "{\"tier\":\"gold\"}",
                     Map.of("region", List.of("emea")), mutation);
             assertFalse(outcome.deduplicated());
-            var replay = storeApi.put(
-                    "acct-1".getBytes(StandardCharsets.UTF_8),
-                    "{\"tier\":\"gold\"}".getBytes(StandardCharsets.UTF_8),
+            var replay = storeApi.put("acct-1", "{\"tier\":\"gold\"}",
                     Map.of("region", List.of("emea")), mutation);
             assertTrue(replay.deduplicated(), "same mutation_id dedupes");
 
-            var lookup = storeApi.get("acct-1".getBytes(StandardCharsets.UTF_8), true, null);
+            var lookup = storeApi.getStrict("acct-1");
             assertNotNull(lookup, "strict lookup returns the row");
-            assertArrayEquals("{\"tier\":\"gold\"}".getBytes(StandardCharsets.UTF_8),
-                    lookup.payload());
-            var page = storeApi.getBy("region", "emea", 10, true, null);
+            assertEquals("{\"tier\":\"gold\"}", lookup.payload());
+            var page = storeApi.getByStrict("region", "emea", 10, java.time.Duration.ofSeconds(10));
             assertEquals(1, page.rows().size());
-            var seen = new ArrayList<byte[]>();
+            var seen = new ArrayList<String>();
             storeApi.iterate(10, row -> seen.add(row.key()));
             assertEquals(1, seen.size());
-            storeApi.delete("acct-1".getBytes(StandardCharsets.UTF_8), UUID.randomUUID());
-            assertNull(storeApi.get("acct-1".getBytes(StandardCharsets.UTF_8), true, null));
+            storeApi.delete("acct-1", UUID.randomUUID());
+            assertNull(storeApi.getStrict("acct-1"));
             storeApi.clear(UUID.randomUUID());
 
             // Writer append lands in retained history; REBUILD INDEX runs

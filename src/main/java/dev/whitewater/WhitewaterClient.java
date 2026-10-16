@@ -29,8 +29,8 @@ import java.util.function.Consumer;
  *         .endpoints(URI.create("http://localhost:7071"))
  *         .apiKey(System.getenv("WHITEWATER_API_KEY"))
  *         .build();
- * var writer = client.writer("orders.checkout", 1);
- * var result = writer.append(UUID.randomUUID(), "order-1".getBytes(), payload);
+ * var writer = client.writer("orders.checkout");
+ * var result = writer.append("order-1", "{\"total\":42}");
  * }</pre>
  */
 public final class WhitewaterClient implements AutoCloseable {
@@ -573,11 +573,31 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /**
-     * A thin facade over the node-side StateStore {@code name} — rows
-     * live on the Nodes (RF3 + Fjall); this client holds no state.
+     * A typed facade over the node-side StateStore {@code name} — rows
+     * live on the Nodes (RF3 + Fjall); this client holds no state. The
+     * default binding takes String keys and {@code byte[]} payloads;
+     * the overloads bind {@link dev.whitewater.model.Codec}s so the SDK
+     * serializes keys/payloads for you:
+     * <pre>{@code
+     * StateStore<String, User> users =
+     *         client.stateStore("app.users", Codecs.json(User.class));
+     * users.put("user-1", user);
+     * User back = users.get("user-1").payload();   // no getBytes anywhere
+     * }</pre>
      */
-    public StateStore stateStore(String name) {
-        return StateStore.bound(transport, name);
+    public StateStore<String, byte[]> stateStore(String name) {
+        return StateStore.defaults(transport, name);
+    }
+
+    /** {@link #stateStore(String)} with String keys and a typed payload Codec. */
+    public <V> StateStore<String, V> stateStore(String name, dev.whitewater.model.Codec<V> payloadCodec) {
+        return StateStore.bound(transport, name, dev.whitewater.model.Codecs.utf8(), payloadCodec);
+    }
+
+    /** {@link #stateStore(String)} with explicit key and payload Codecs. */
+    public <K, V> StateStore<K, V> stateStore(
+            String name, dev.whitewater.model.Codec<K> keyCodec, dev.whitewater.model.Codec<V> payloadCodec) {
+        return StateStore.bound(transport, name, keyCodec, payloadCodec);
     }
 
     /** Collection-level StateStore operations: declare, drop. */

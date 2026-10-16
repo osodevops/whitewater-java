@@ -3,15 +3,17 @@ package dev.whitewater;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.internal.Wire;
+import dev.whitewater.model.Codec;
 import dev.whitewater.model.ControlExecution;
 import dev.whitewater.model.Extractor;
+import dev.whitewater.model.StateStoreSpec;
 
 import java.util.UUID;
 
 /**
  * Collection-level StateStore operations: declaration and drop. Row
  * operations live on the bound {@link StateStore} facade returned by
- * {@link WhitewaterClient#stateStore(String)}.
+ * {@link WhitewaterClient#stateStore(String)} or {@link #define}.
  */
 public final class StateStoresClient {
 
@@ -23,15 +25,23 @@ public final class StateStoresClient {
 
     /**
      * Declare {@code spec} on the Control Plane and return it bound to
-     * this client. {@code source} names a same-Domain Feed the store
-     * materializes from; null means a manual store. Feed-sourced named
-     * keys must each declare an {@link Extractor} so replay can project
-     * typed values; extractors on a manual store are refused.
+     * this client (String keys, {@code byte[]} payloads —
+     * {@link StateStore#view} rebinds other {@link Codec}s).
+     * {@code source} names a same-Domain Feed the store materializes
+     * from; null means a manual store. Feed-sourced named keys must
+     * each declare an {@link Extractor} so replay can project typed
+     * values; extractors on a manual store are refused.
      */
-    public StateStore define(StateStore spec, String source) {
+    public StateStore<String, byte[]> define(StateStoreSpec spec, String source) {
+        return define(spec, source, null, null);
+    }
+
+    /** {@link #define(StateStoreSpec, String)} bound under explicit Codecs. */
+    public <K, V> StateStore<K, V> define(
+            StateStoreSpec spec, String source, Codec<K> keyCodec, Codec<V> payloadCodec) {
         if (spec == null) {
             throw new IllegalArgumentException(
-                    "define() takes a StateStore spec — use StateStore.named(name)");
+                    "define() takes a StateStoreSpec — use StateStoreSpec.named(name)");
         }
         if (source == null
                 && spec.namedKeys().stream().anyMatch(k -> k.extractor() != null)) {
@@ -70,11 +80,15 @@ public final class StateStoresClient {
         });
         commands.add(command);
         Wire.controlExecution(transport.post("/v1/admin/commands", body));
-        return spec.bind(transport);
+        @SuppressWarnings("unchecked")
+        Codec<K> keys = keyCodec != null ? keyCodec : (Codec<K>) dev.whitewater.model.Codecs.utf8();
+        @SuppressWarnings("unchecked")
+        Codec<V> values = payloadCodec != null ? payloadCodec : (Codec<V>) dev.whitewater.model.Codecs.bytes();
+        return StateStore.bound(transport, spec.name(), keys, values);
     }
 
     /** Tombstone the named store. */
     public ControlExecution drop(String name) {
-        return StateStore.bound(transport, name).drop();
+        return StateStore.<String, byte[]>defaults(transport, name).drop();
     }
 }

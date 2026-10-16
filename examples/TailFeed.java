@@ -39,7 +39,7 @@ public class TailFeed {
                 var result = client.feeds().append("demo.tail", new FeedAppend(
                         UUID.randomUUID(), UUID.randomUUID(), 1, 1,
                         "key-1".getBytes(StandardCharsets.UTF_8),
-                        "hello whitewater".getBytes(StandardCharsets.UTF_8),
+                        "hello whitewater".getBytes(StandardCharsets.UTF_8),   // low-level API: raw bytes
                         null, Map.of()));
                 System.out.println(">>> appended, cursor=" + result.cursor().value());
             } catch (Exception e) {
@@ -60,7 +60,7 @@ public class TailFeed {
 
             for (FeedRecord r : page.records()) {
                 System.out.printf("got record after %dms wait: %s  ingest_ns=%s%n",
-                        waited, new String(r.payload(), StandardCharsets.UTF_8), r.ingestTimeNs());
+                        waited, r.payloadText(), r.ingestTimeNs());
             }
             if (page.records().isEmpty()) {
                 System.out.printf("(still waiting... fetch returned empty after %dms)%n", waited);

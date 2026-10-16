@@ -1,11 +1,12 @@
 package dev.whitewater;
 
+import dev.whitewater.model.Codecs;
+import dev.whitewater.model.StateStoreSpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +17,8 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Live store smoke against a running Riverbed — declares a named-key
  * StateStore on the Nodes, then exercises put/get/getBy/iterate/delete/
- * clear end to end.
+ * clear end to end through the typed facade: String keys and String
+ * payloads, no byte plumbing in application code.
  *
  * <p>Runs only when {@code WHITEWATER_ENDPOINTS} is set, e.g.
  * {@code http://localhost:7371,http://localhost:7372,http://localhost:7373};
@@ -24,10 +26,6 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @EnabledIfEnvironmentVariable(named = "WHITEWATER_ENDPOINTS", matches = ".+")
 class LiveStoreIT {
-
-    private static byte[] utf8(String value) {
-        return value.getBytes(StandardCharsets.UTF_8);
-    }
 
     @Test
     void declaresAndExercisesAServerSideStateStore() throws Exception {
@@ -49,36 +47,34 @@ class LiveStoreIT {
         assertTrue(client.healthy());
         client.createDomain(domain);
 
-        var spec = StateStore.named(domain + ".employees")
+        var spec = StateStoreSpec.named(domain + ".employees")
                 .addKey("passport", true)
                 .addKey("department", false);
-        var store = client.stateStores().define(spec, null);
+        StateStore<String, String> store =
+                client.stateStores().define(spec, null, Codecs.utf8(), Codecs.utf8());
         assertEquals(domain + ".employees", store.name());
 
-        store.put(utf8("emp-1"), utf8("alice"),
-                Map.of("passport", "P111", "department", "eng"), null);
-        store.put(utf8("emp-2"), utf8("bob"),
-                Map.of("passport", "P222", "department", "eng"), null);
-        store.put(utf8("emp-3"), utf8("cara"),
-                Map.of("passport", "P333", "department", "ops"), null);
+        store.put("emp-1", "alice", Map.of("passport", "P111", "department", "eng"));
+        store.put("emp-2", "bob", Map.of("passport", "P222", "department", "eng"));
+        store.put("emp-3", "cara", Map.of("passport", "P333", "department", "ops"));
 
-        var row = store.get(utf8("emp-1"), true, 5000L);
+        var row = store.getStrict("emp-1", Duration.ofSeconds(5));
         assertNotNull(row);
-        assertEquals("alice", new String(row.payload(), StandardCharsets.UTF_8));
+        assertEquals("alice", row.payload());
 
-        var eng = store.getBy("department", "eng", null, true, 5000L);
+        var eng = store.getByStrict("department", "eng", Duration.ofSeconds(5));
         assertEquals(2, eng.rows().size());
         assertTrue(eng.freshness().appliedSeq() > 0);
 
         var keys = new TreeSet<String>();
-        store.iterate(1, r -> keys.add(new String(r.key(), StandardCharsets.UTF_8)));
+        store.iterate(1, r -> keys.add(r.key()));
         assertEquals(new TreeSet<>(List.of("emp-1", "emp-2", "emp-3")), keys);
 
-        store.delete(utf8("emp-1"));
-        assertNull(store.get(utf8("emp-1"), true, 5000L));
-        assertEquals(1, store.getBy("department", "eng", null, true, 5000L).rows().size());
+        store.delete("emp-1");
+        assertNull(store.getStrict("emp-1", Duration.ofSeconds(5)));
+        assertEquals(1, store.getByStrict("department", "eng", Duration.ofSeconds(5)).rows().size());
 
-        store.clear(null);
-        assertTrue(store.page(null, null).rows().isEmpty());
+        store.clear();
+        assertTrue(store.page().rows().isEmpty());
     }
 }

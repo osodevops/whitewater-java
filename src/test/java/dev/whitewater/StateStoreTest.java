@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpServer;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.model.Extractor;
+import dev.whitewater.model.Codecs;
+import dev.whitewater.model.StateStoreSpec;
 import dev.whitewater.model.StoreRow;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -112,7 +114,7 @@ class StateStoreTest {
 
     @Test
     void defineSendsTheTypedCommandWithDeclaredNamedKeys() throws Exception {
-        var spec = StateStore.named("accounts.employees")
+        var spec = StateStoreSpec.named("accounts.employees")
                 .addKey("passport", true)
                 .addKey("department", false);
         var store = client.stateStores().define(spec, null);
@@ -129,26 +131,26 @@ class StateStoreTest {
 
     @Test
     void boundsNamedKeysAndRejectsDuplicates() {
-        var spec = StateStore.named("accounts.ten");
+        var spec = StateStoreSpec.named("accounts.ten");
         for (int i = 0; i < 10; i++) {
             spec.addKey("k" + i);
         }
         assertThrows(IllegalStateException.class, () -> spec.addKey("k10"));
         assertThrows(IllegalArgumentException.class,
-                () -> StateStore.named("accounts.d").addKey("a").addKey("a"));
-        assertThrows(IllegalArgumentException.class, () -> StateStore.named("accounts.b").addKey(" "));
+                () -> StateStoreSpec.named("accounts.d").addKey("a").addKey("a"));
+        assertThrows(IllegalArgumentException.class, () -> StateStoreSpec.named("accounts.b").addKey(" "));
     }
 
     @Test
     void defineFeedSourcedNamedKeysNeedExtractors() {
         // A feed-sourced named key without a projection is a declaration bug.
-        var bare = StateStore.named("accounts.src").addKey("k");
+        var bare = StateStoreSpec.named("accounts.src").addKey("k");
         var refused = assertThrows(IllegalArgumentException.class,
                 () -> client.stateStores().define(bare, "accounts.events"));
         assertTrue(refused.getMessage().contains("require an extractor"));
 
         // An extractor on a manual store is refused — puts carry the values.
-        var manual = StateStore.named("accounts.m").addKey("k", false, Extractor.metadata("pp"));
+        var manual = StateStoreSpec.named("accounts.m").addKey("k", false, Extractor.metadata("pp"));
         var refusedManual = assertThrows(IllegalArgumentException.class,
                 () -> client.stateStores().define(manual, null));
         assertTrue(refusedManual.getMessage().contains("manual stores"));
@@ -156,7 +158,7 @@ class StateStoreTest {
 
     @Test
     void defineFeedSourcedEmitsExtractors() throws Exception {
-        var spec = StateStore.named("accounts.tagged")
+        var spec = StateStoreSpec.named("accounts.tagged")
                 .addKey("passport", true, Extractor.metadata("pp"))
                 .addKey("department", false, Extractor.json("dept"));
         client.stateStores().define(spec, "accounts.events");
@@ -175,21 +177,23 @@ class StateStoreTest {
     }
 
     @Test
-    void unboundSpecRefusesRowOperations() {
-        var spec = StateStore.named("accounts.unbound");
-        assertThrows(IllegalStateException.class,
-                () -> spec.get("k".getBytes(), false, null));
+    void specIsDeclarationOnly() {
+        // StateStoreSpec carries name + named keys — data operations
+        // live on the bound StateStore facade, so an unbound spec has
+        // nothing to call (compile-time enforced, no runtime check needed).
+        var spec = StateStoreSpec.named("accounts.unbound").addKey("k");
+        assertEquals(1, spec.namedKeys().size());
     }
 
     @Test
     void putEncodesTypedNamedValuesAndDeletePostsTheOp() throws Exception {
-        var store = client.stateStore("accounts.employees");
-        var put = store.put("user-1".getBytes(), "profile-1".getBytes(), Map.of(
+        var store = client.stateStore("accounts.employees", Codecs.utf8());
+        var put = store.put("user-1", "profile-1", Map.of(
                 "passport", "P111",
                 "salary", 92000L,
                 "big", BigInteger.valueOf(7),
                 "active", true,
-                "badge", new byte[]{1, 2}), null);
+                "badge", new byte[]{1, 2}));
         assertEquals(4, put.sequence());
         assertFalse(put.deduplicated());
 
@@ -212,24 +216,24 @@ class StateStoreTest {
         assertEquals("bytes", named.get("badge").get("kind").asText());
         assertEquals("AQI=", named.get("badge").get("value_base64").asText());
 
-        store.delete("user-1".getBytes());
+        store.delete("user-1");
         JsonNode deleteOp = lastBody("/v1/state-stores/mutate").get("op");
         assertEquals("delete_row", deleteOp.get("kind").asText());
     }
 
     @Test
     void floatsAreRefusedAsNamedValues() {
-        var store = client.stateStore("accounts.employees");
+        var store = client.stateStore("accounts.employees", Codecs.utf8());
         assertThrows(IllegalArgumentException.class,
-                () -> store.put("k".getBytes(), "v".getBytes(), Map.of("score", 1.5), null));
+                () -> store.put("k", "v", Map.of("score", 1.5)));
     }
 
     @Test
     void getReturnsTheRowWithFreshnessEvidence() throws Exception {
-        var store = client.stateStore("accounts.employees");
-        StoreRow row = store.get("user-1".getBytes(), true, 1000L);
+        var store = client.stateStore("accounts.employees", Codecs.utf8());
+        StoreRow<String, String> row = store.get("user-1", true, 1000L);
         assertNotNull(row);
-        assertEquals("payload-1", new String(row.payload(), StandardCharsets.UTF_8));
+        assertEquals("payload-1", row.payload());
         assertEquals("41", row.appliedCursor());
         assertEquals(5, row.freshness().committedSeq());
         assertTrue(row.freshness().behind());
@@ -239,11 +243,36 @@ class StateStoreTest {
     }
 
     @Test
+    void convenienceGetReadsFastAndGetStrictBoundsTheWait() throws Exception {
+        var store = client.stateStore("accounts.employees", Codecs.utf8());
+        store.get("user-1");                                    // the fast path
+        JsonNode fast = lastBody("/v1/state-stores/lookup");
+        assertFalse(fast.get("strict").asBoolean());
+        assertTrue(fast.get("wait_ms") == null || fast.get("wait_ms").isNull());
+
+        store.getStrict("user-1", java.time.Duration.ofSeconds(2));
+        JsonNode strict = lastBody("/v1/state-stores/lookup");
+        assertTrue(strict.get("strict").asBoolean());
+        assertEquals(2000, strict.get("wait_ms").asLong());
+    }
+
+    @Test
+    void jsonBoundStoresDecodeOrFailWithTheTypeNamed() throws Exception {
+        record Payload(String text) {}
+        var store = client.stateStore("accounts.employees", Codecs.json(Payload.class));
+        // The stub's getBy rows carry "p1"/"p2" — not Payload JSON —
+        // so decoding surfaces the bound type, not a byte[] leak.
+        var thrown = assertThrows(IllegalArgumentException.class,
+                () -> store.getBy("department", "eng"));
+        assertTrue(thrown.getMessage().contains("Payload"));
+    }
+
+    @Test
     void getByPostsTheNamedKeyLookupAndDecodesRows() throws Exception {
-        var store = client.stateStore("accounts.employees");
-        var result = store.getBy("department", "eng", 50, false, null);
+        var store = client.stateStore("accounts.employees", Codecs.utf8());
+        var result = store.getBy("department", "eng", 50);
         assertEquals(2, result.rows().size());
-        assertEquals("user-1", new String(result.rows().get(0).key(), StandardCharsets.UTF_8));
+        assertEquals("user-1", result.rows().get(0).key());
         JsonNode sent = lastBody("/v1/state-stores/get-by");
         assertEquals("department", sent.get("named_key").asText());
         assertEquals("text", sent.get("values").get(0).get("kind").asText());
@@ -275,9 +304,9 @@ class StateStoreTest {
             exchange.close();
         });
 
-        var store = client.stateStore("accounts.employees");
+        var store = client.stateStore("accounts.employees", Codecs.utf8());
         var keys = new CopyOnWriteArrayList<String>();
-        store.iterate(1, row -> keys.add(new String(row.key(), StandardCharsets.UTF_8)));
+        store.iterate(1, row -> keys.add(row.key()));
         assertEquals(List.of("a", "b"), keys);
         assertEquals(2, iteratePaths.size());
         assertEquals("a", new String(java.util.Base64.getDecoder()
@@ -286,8 +315,8 @@ class StateStoreTest {
 
     @Test
     void clearPostsAJournaledMutationAndDropIssuesTheCommand() throws Exception {
-        var store = client.stateStore("accounts.employees");
-        var cleared = store.clear(null);
+        var store = client.stateStore("accounts.employees", Codecs.utf8());
+        var cleared = store.clear();
         assertEquals(4, cleared.sequence());
         JsonNode sent = lastBody("/v1/state-stores/clear");
         assertEquals("accounts.employees", sent.get("store").asText());

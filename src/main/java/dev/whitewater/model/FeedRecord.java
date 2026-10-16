@@ -18,4 +18,26 @@ public record FeedRecord(
         long ingestTimeNs,
         byte[] key,
         byte[] payload,
-        Map<String, byte[]> metadata) {}
+        Map<String, byte[]> metadata) {
+
+    /** The key decoded as UTF-8 — convenience when keys are text. */
+    public String keyText() {
+        return new String(key, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** The payload decoded as UTF-8 — convenience when payloads are text/JSON. */
+    public String payloadText() {
+        return new String(payload, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** The payload Jackson-decoded into {@code type}. */
+    public <T> T payloadAs(Class<T> type) {
+        return dev.whitewater.model.Codecs.json(type).decode(payload);
+    }
+
+    /** A Metadata entry decoded as UTF-8, or null when absent. */
+    public String metadataText(String name) {
+        byte[] value = metadata == null ? null : metadata.get(name);
+        return value == null ? null : new String(value, java.nio.charset.StandardCharsets.UTF_8);
+    }
+}

@@ -21,8 +21,9 @@ import java.util.concurrent.Executor;
  *
  * <pre>{@code
  * var writer = client.writer("orders.ingest");            // opens a session
- * writer.append("order-1".getBytes(), payload);           // auto request_id
- * writer.append(new Writer.Record("order-2".getBytes(), payload)); // + event time
+ * writer.append("order-1", "{\"total\":42}");              // UTF-8 convenience
+ * writer.append("order-2".getBytes(), binaryPayload);      // raw bytes when you have them
+ * writer.append(new Writer.Record(requestId, "order-3", json)); // pinned request_id
  * }</pre>
  *
  * <p>Retry an ambiguous append by repeating the same call after
@@ -51,6 +52,17 @@ public final class Writer {
         /** Explicit request identity for retryable writes. */
         public Record(UUID requestId, byte[] key, byte[] payload) {
             this(requestId, key, payload, null, null);
+        }
+
+        /** UTF-8 convenience — the common text key/JSON-payload case. */
+        public Record(String key, String payload) {
+            this(null, key, payload);
+        }
+
+        /** UTF-8 convenience with explicit request identity. */
+        public Record(UUID requestId, String key, String payload) {
+            this(requestId, key.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    payload.getBytes(java.nio.charset.StandardCharsets.UTF_8), null, null);
         }
     }
 
@@ -112,6 +124,11 @@ public final class Writer {
 
     /** Append one record; request identity and event time auto-generate. */
     public AppendResult append(byte[] key, byte[] payload) {
+        return append(new Record(key, payload));
+    }
+
+    /** {@link #append(byte[], byte[])} for UTF-8 text keys/payloads. */
+    public AppendResult append(String key, String payload) {
         return append(new Record(key, payload));
     }
 

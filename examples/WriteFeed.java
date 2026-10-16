@@ -2,7 +2,6 @@ import dev.whitewater.WhitewaterClient;
 import dev.whitewater.Writer;
 
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Producing records: the session-bound {@link Writer} opens
@@ -32,25 +31,21 @@ public class WriteFeed {
         var writer = client.writer("orders-writer");
 
         // simplest form: auto request identity, ingest-clock event time.
-        var first = writer.append(
-                "order-1".getBytes(StandardCharsets.UTF_8),
-                "{\"total\":42}".getBytes(StandardCharsets.UTF_8));
+        var first = writer.append("order-1", "{\"total\":42}");
         System.out.printf("committed %s at %s%n", first.messageId(), first.cursor());
 
         // explicit request identity for a retryable write you may drive
         // across calls or process restarts.
         var requestId = java.util.UUID.randomUUID();
         var second = writer.append(new Writer.Record(
-                requestId,
-                "order-2".getBytes(StandardCharsets.UTF_8),
-                "{\"total\":17}".getBytes(StandardCharsets.UTF_8)));
+                requestId, "order-2", "{\"total\":17}"));
         System.out.printf("committed %s (deduplicated=%s)%n",
                 second.messageId(), second.deduplicated());
 
         // batch appends share one round trip.
         var batch = writer.appendBatch(java.util.List.of(
-                new Writer.Record("k3".getBytes(), "v3".getBytes()),
-                new Writer.Record("k4".getBytes(), "v4".getBytes())));
+                new Writer.Record("k3", "v3"),
+                new Writer.Record("k4", "v4")));
         System.out.printf("batch committed %d records%n", batch.results().size());
     }
 }

@@ -3,9 +3,10 @@ package dev.whitewater.model;
 import java.util.List;
 
 /**
- * One bounded iteration page in primary-key order. {@code pinnedSeq} is
- * the serving replica's applied journal position the page was pinned to —
- * the iteration's freshness evidence. {@code nextKey} continues the scan.
+ * One bounded iteration page in primary-key order — the same row set
+ * replica transfer serves, pinned to {@link #pinnedSeq}. {@code nextKey}
+ * (already codec-decoded) is the continuation: pass it back into
+ * {@code page(nextKey, limit)}; null ends the walk.
  */
-public record StorePage(List<StoreRow> rows, byte[] nextKey, long pinnedSeq, String servedBy) {
+public record StorePage<K, V>(List<StoreRow<K, V>> rows, K nextKey, long pinnedSeq, String servedBy) {
 }

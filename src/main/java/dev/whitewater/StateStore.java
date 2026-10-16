@@ -4,14 +4,17 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.internal.Wire;
+import dev.whitewater.model.Codec;
+import dev.whitewater.model.Codecs;
 import dev.whitewater.model.ControlExecution;
-import dev.whitewater.model.Extractor;
+import dev.whitewater.model.IndexPredicate.IndexBound;
 import dev.whitewater.model.MutationResult;
-import dev.whitewater.model.NamedKey;
 import dev.whitewater.model.StorePage;
 import dev.whitewater.model.StoreRow;
 import dev.whitewater.model.StoreRows;
+import dev.whitewater.model.StoreSync;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -20,118 +23,77 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
- * A thin facade over one node-side StateStore — the durable RF3 + Fjall
+ * A typed facade over one node-side StateStore — the durable RF3 + Fjall
  * store on the Nodes is the only store; this object holds no rows.
- * Declare it with named keys, then put/get/delete/iterate:
+ * Declare it with {@link dev.whitewater.model.StateStoreSpec}, then work
+ * in your own types — the bound {@link Codec}s handle every byte
+ * conversion:
  *
  * <pre>{@code
- * var spec = StateStore.named("accounts.employees")
- *         .addKey("passport", true).addKey("department", false);
- * var store = client.stateStores().define(spec, null);
+ * var spec = StateStoreSpec.named("accounts.employees")
+ *         .addKey("passport", true).addKey("department");
+ * client.stateStores().define(spec, null);
  *
- * store.put("user-1".getBytes(), "profile-1".getBytes(),
- *         Map.of("passport", "P111", "department", "eng"), null);
- * var row = store.get("user-1".getBytes(), false, 0);       // StoreRow | null
- * var rows = store.getBy("department", "eng", 0, false, 0); // every match
- * store.iterate(256, r -> export(r));                       // key-ordered pages
- * store.clear(null);
+ * StateStore<String, Employee> store =
+ *         client.stateStore("accounts.employees", Codecs.json(Employee.class));
+ *
+ * store.put("user-1", new Employee("alice", "eng"),
+ *         Map.of("passport", "P111", "department", "eng"));
+ * var row = store.get("user-1");                       // StoreRow<String, Employee> | null
+ * Employee alice = row.payload();                       // decoded — never getBytes
+ * var eng = store.getBy("department", "eng");           // every match
+ * store.iterate(r -> export(r));
  * }</pre>
  *
- * <p>{@link #addKey} records declaration intent used by {@code define};
- * it does not mutate an already-declared store (named keys are declared
- * at creation). Named values are typed — {@link String}, whole
- * {@link Number}s/{@link java.math.BigInteger}, {@link Boolean},
- * {@code byte[]}, or null; a {@link List} value carries one typed value
- * per posting component.
+ * <p>{@link WhitewaterClient#stateStore(String)} binds String keys with
+ * raw {@code byte[]} payloads; pass a payload {@link Codec} (or key +
+ * payload Codecs) for objects. Named-key values are typed —
+ * {@link String}, whole {@link Number}s/{@link java.math.BigInteger},
+ * {@link Boolean}, {@code byte[]}, or null; a {@link List} value carries
+ * one typed value per posting component.
  */
-public final class StateStore {
+public final class StateStore<K, V> {
 
-    /** Named secondary keys per store; matches the server declaration budget. */
-    public static final int MAX_NAMED_KEYS = NamedKey.MAX_NAMED_KEYS;
-
-    private final List<NamedKey> declaredKeys = new ArrayList<>();
-
-    private Transport transport;
+    private final Transport transport;
     private final String name;
+    private final Codec<K> keyCodec;
+    private final Codec<V> payloadCodec;
 
-    private StateStore(Transport transport, String name) {
-        this.transport = transport;
+    private StateStore(Transport transport, String name, Codec<K> keyCodec, Codec<V> payloadCodec) {
+        this.transport = Objects.requireNonNull(transport);
         this.name = name;
+        this.keyCodec = Objects.requireNonNull(keyCodec, "keyCodec");
+        this.payloadCodec = Objects.requireNonNull(payloadCodec, "payloadCodec");
     }
 
-    /** An unbound declaration spec for {@link StateStoresClient#define}. */
-    public static StateStore named(String name) {
-        return new StateStore(null, WhitewaterClient.dottedName(name));
-    }
-
-    static StateStore bound(Transport transport, String name) {
-        return new StateStore(transport, WhitewaterClient.dottedName(name));
+    static <K, V> StateStore<K, V> bound(
+            Transport transport, String name, Codec<K> keyCodec, Codec<V> payloadCodec) {
+        return new StateStore<>(transport, WhitewaterClient.dottedName(name), keyCodec, payloadCodec);
     }
 
     public String name() {
         return name;
     }
 
-    /**
-     * Declare a named secondary key for {@code define} (at most
-     * {@value #MAX_NAMED_KEYS}). {@code extractor} declares how replay
-     * projects each source-Feed record to this key's values — required
-     * on feed-sourced stores, refused on manual ones.
-     */
-    public StateStore addKey(String namedKey, boolean unique, Extractor extractor) {
-        if (namedKey == null || namedKey.isBlank()) {
-            throw new IllegalArgumentException("named key is required");
-        }
-        if (declaredKeys.stream().anyMatch(k -> k.name().equals(namedKey))) {
-            throw new IllegalArgumentException("duplicate named key: " + namedKey);
-        }
-        if (declaredKeys.size() >= MAX_NAMED_KEYS) {
-            throw new IllegalStateException(
-                    "a StateStore declares at most " + MAX_NAMED_KEYS + " named keys");
-        }
-        declaredKeys.add(new NamedKey(namedKey, unique, extractor));
-        return this;
-    }
-
-    public StateStore addKey(String namedKey, boolean unique) {
-        return addKey(namedKey, unique, null);
-    }
-
-    public StateStore addKey(String namedKey) {
-        return addKey(namedKey, false);
-    }
-
-    public List<NamedKey> namedKeys() {
-        return List.copyOf(declaredKeys);
-    }
-
-    private Transport boundTransport() {
-        if (transport == null) {
-            throw new IllegalStateException(
-                    "unbound StateStore spec — pass it to client.stateStores().define() "
-                            + "or get a bound facade via client.stateStore(name)");
-        }
-        return transport;
-    }
-
-    StateStore bind(Transport transport) {
-        this.transport = transport;
-        return this;
+    /** Rebind the same store under different Codecs — no wire call. */
+    public <K2, V2> StateStore<K2, V2> view(Codec<K2> keyCodec, Codec<V2> payloadCodec) {
+        return new StateStore<>(transport, name, keyCodec, payloadCodec);
     }
 
     /**
      * Insert or replace one row. {@code named} maps a declared named key
      * to a typed value (or a {@link List} for multi-component postings).
-     * {@code mutationId} is the caller-owned idempotency identity; null
-     * generates one.
+     * {@code mutationId} is the caller-owned idempotency identity —
+     * reuse it on retries; {@link #put(Object, Object, Map)} generates
+     * one per call.
      */
-    public MutationResult put(byte[] key, byte[] payload, Map<String, ?> named, UUID mutationId) {
+    public MutationResult put(K key, V value, Map<String, ?> named, UUID mutationId) {
         Objects.requireNonNull(key, "key");
-        Objects.requireNonNull(payload, "payload");
+        Objects.requireNonNull(value, "value");
         ObjectNode op = Transport.json().createObjectNode();
         op.put("kind", "put_row");
-        op.put("key_base64", Wire.b64(key));
-        op.put("payload_base64", Wire.b64(payload));
+        op.put("key_base64", Wire.b64(keyCodec.encode(key)));
+        op.put("payload_base64", Wire.b64(payloadCodec.encode(value)));
         if (named != null && !named.isEmpty()) {
             op.set("named", Wire.namedValues(named));
         }
@@ -139,11 +101,36 @@ public final class StateStore {
         body.put("store", name);
         body.put("mutation_id", (mutationId == null ? UUID.randomUUID() : mutationId).toString());
         body.set("op", op);
-        return Wire.mutationResult(boundTransport().post("/v1/state-stores/mutate", body));
+        return Wire.mutationResult(transport.post("/v1/state-stores/mutate", body));
     }
 
-    public MutationResult put(byte[] key, byte[] payload, Map<String, ?> named) {
-        return put(key, payload, named, null);
+    public MutationResult put(K key, V value, Map<String, ?> named) {
+        return put(key, value, named, null);
+    }
+
+    /** Put with no named-key postings. */
+    public MutationResult put(K key, V value) {
+        return put(key, value, null, null);
+    }
+
+    /**
+     * Primary-key read from the serving replica immediately — the row's
+     * {@link dev.whitewater.model.StoreFreshness} reports whether it
+     * answered behind its committed frontier. Use {@link #getStrict}
+     * when the read must observe the latest committed write.
+     */
+    public StoreRow<K, V> get(K key) {
+        return get(key, false, null);
+    }
+
+    /** Bounded-fresh read: waits for the replica to apply its committed frontier. */
+    public StoreRow<K, V> getStrict(K key) {
+        return get(key, true, null);
+    }
+
+    /** Bounded-fresh read with an explicit wait bound. */
+    public StoreRow<K, V> getStrict(K key, Duration wait) {
+        return get(key, true, wait.toMillis());
     }
 
     /**
@@ -152,23 +139,23 @@ public final class StateStore {
      * serving replica to apply its committed frontier rather than
      * answering stale.
      */
-    public StoreRow get(byte[] key, boolean strict, Long waitMs) {
+    public StoreRow<K, V> get(K key, boolean strict, Long waitMs) {
         Objects.requireNonNull(key, "key");
         ObjectNode body = Transport.json().createObjectNode();
         body.put("store", name);
-        body.put("key_base64", Wire.b64(key));
+        body.put("key_base64", Wire.b64(keyCodec.encode(key)));
         body.put("strict", strict);
         if (waitMs != null) {
             body.put("wait_ms", waitMs);
         }
-        JsonNode response = boundTransport().post("/v1/state-stores/lookup", body);
+        JsonNode response = transport.post("/v1/state-stores/lookup", body);
         if (!response.path("found").asBoolean(false)) {
             return null;
         }
         JsonNode appliedCursor = response.path("applied_cursor");
-        return new StoreRow(
+        return new StoreRow<>(
                 key,
-                Wire.b64(response.path("payload_base64").asText()),
+                payloadCodec.decode(Wire.b64(response.path("payload_base64").asText())),
                 appliedCursor.isNull() || appliedCursor.isMissingNode()
                         ? null
                         : appliedCursor.asText(),
@@ -180,8 +167,23 @@ public final class StateStore {
      * serving replica's freshness evidence. {@code value} is a typed
      * scalar or a {@link List} for multi-component postings.
      */
-    public StoreRows getBy(String namedKey, Object value, Integer limit, boolean strict, Long waitMs) {
-        return getBy(namedKey, value, null, null, limit, strict, waitMs);
+    public StoreRows<K, V> getBy(String namedKey, Object value) {
+        return getBy(namedKey, value, null, null, null, false, null);
+    }
+
+    /** {@link #getBy(String, Object)} bounded to {@code limit} rows. */
+    public StoreRows<K, V> getBy(String namedKey, Object value, Integer limit) {
+        return getBy(namedKey, value, null, null, limit, false, null);
+    }
+
+    /** {@link #getBy(String, Object)} that bounded-waits for freshness. */
+    public StoreRows<K, V> getByStrict(String namedKey, Object value, Duration wait) {
+        return getBy(namedKey, value, null, null, null, true, wait.toMillis());
+    }
+
+    /** {@link #getByStrict(String, Object, Duration)} bounded to {@code limit} rows. */
+    public StoreRows<K, V> getByStrict(String namedKey, Object value, Integer limit, Duration wait) {
+        return getBy(namedKey, value, null, null, limit, true, wait.toMillis());
     }
 
     /**
@@ -189,10 +191,9 @@ public final class StateStore {
      * posting range the lookup scans (inclusive/exclusive), like an
      * Index range predicate.
      */
-    public StoreRows getBy(String namedKey, Object value,
-                           dev.whitewater.model.IndexPredicate.IndexBound lower,
-                           dev.whitewater.model.IndexPredicate.IndexBound upper,
-                           Integer limit, boolean strict, Long waitMs) {
+    public StoreRows<K, V> getBy(String namedKey, Object value,
+                                 IndexBound lower, IndexBound upper,
+                                 Integer limit, boolean strict, Long waitMs) {
         ObjectNode body = Transport.json().createObjectNode();
         body.put("store", name);
         body.put("named_key", namedKey);
@@ -219,48 +220,65 @@ public final class StateStore {
         if (waitMs != null) {
             body.put("wait_ms", waitMs);
         }
-        return Wire.storeRows(boundTransport().post("/v1/state-stores/get-by", body));
+        return typed(Wire.storeRows(transport.post("/v1/state-stores/get-by", body)));
     }
 
-    /** Remove the row and its named postings. */
-    public MutationResult delete(byte[] key, UUID mutationId) {
+    /** Remove the row and its named postings; mutation identity auto-generated. */
+    public MutationResult delete(K key) {
+        return delete(key, null);
+    }
+
+    /** Remove the row under a caller-owned idempotency identity. */
+    public MutationResult delete(K key, UUID mutationId) {
         Objects.requireNonNull(key, "key");
         ObjectNode op = Transport.json().createObjectNode();
         op.put("kind", "delete_row");
-        op.put("key_base64", Wire.b64(key));
+        op.put("key_base64", Wire.b64(keyCodec.encode(key)));
         ObjectNode body = Transport.json().createObjectNode();
         body.put("store", name);
         body.put("mutation_id", (mutationId == null ? UUID.randomUUID() : mutationId).toString());
         body.set("op", op);
-        return Wire.mutationResult(boundTransport().post("/v1/state-stores/mutate", body));
+        return Wire.mutationResult(transport.post("/v1/state-stores/mutate", body));
     }
 
-    public MutationResult delete(byte[] key) {
-        return delete(key, null);
+    /** The first iteration page at the default bound. */
+    public StorePage<K, V> page() {
+        return page(null, null);
     }
 
     /**
      * One bounded iteration page in primary-key order — the same row set
      * replica transfer serves, pinned to {@link StorePage#pinnedSeq}.
+     * Feed {@code page.nextKey()} back in to continue.
      */
-    public StorePage page(byte[] afterKey, Integer limit) {
+    public StorePage<K, V> page(K afterKey, Integer limit) {
         ObjectNode body = Transport.json().createObjectNode();
         body.put("store", name);
         if (afterKey != null) {
-            body.put("after_key_base64", Wire.b64(afterKey));
+            body.put("after_key_base64", Wire.b64(keyCodec.encode(afterKey)));
         }
         if (limit != null) {
             body.put("limit", limit);
         }
-        return Wire.storePage(boundTransport().post("/v1/state-stores/iterate", body));
+        StorePage<byte[], byte[]> raw = Wire.storePage(transport.post("/v1/state-stores/iterate", body));
+        List<StoreRow<K, V>> rows = new ArrayList<>(raw.rows().size());
+        raw.rows().forEach(row -> rows.add(typed(row)));
+        return new StorePage<>(List.copyOf(rows),
+                raw.nextKey() == null ? null : keyCodec.decode(raw.nextKey()),
+                raw.pinnedSeq(), raw.servedBy());
     }
 
     /** Invoke {@code visitor} per row in primary-key order across bounded pages. */
-    public void iterate(Integer pageSize, Consumer<StoreRow> visitor) {
+    public void iterate(Consumer<StoreRow<K, V>> visitor) {
+        iterate(256, visitor);
+    }
+
+    /** {@link #iterate(Consumer)} with an explicit page bound. */
+    public void iterate(int pageSize, Consumer<StoreRow<K, V>> visitor) {
         Objects.requireNonNull(visitor, "visitor");
-        byte[] after = null;
+        K after = null;
         while (true) {
-            StorePage page = page(after, pageSize);
+            StorePage<K, V> page = page(after, pageSize);
             page.rows().forEach(visitor);
             if (page.nextKey() == null) {
                 return;
@@ -269,13 +287,18 @@ public final class StateStore {
         }
     }
 
-    /** Empty the store as one journaled mutation — durable and idempotent
-     * under {@code mutationId} retries (null generates one). */
+    /** Empty the store as one journaled mutation; mutation identity auto-generated. */
+    public MutationResult clear() {
+        return clear(null);
+    }
+
+    /** Empty the store under a caller-owned idempotency identity —
+     * durable and deduplicated on retries. */
     public MutationResult clear(UUID mutationId) {
         ObjectNode body = Transport.json().createObjectNode();
         body.put("store", name);
         body.put("mutation_id", (mutationId == null ? UUID.randomUUID() : mutationId).toString());
-        return Wire.mutationResult(boundTransport().post("/v1/state-stores/clear", body));
+        return Wire.mutationResult(transport.post("/v1/state-stores/clear", body));
     }
 
     /**
@@ -283,10 +306,15 @@ public final class StateStore {
      * committing up to the bounded pass limit as journaled mutations.
      * {@code complete} reports the pass finished outstanding history.
      */
-    public dev.whitewater.model.StoreSync sync() {
+    public StoreSync sync() {
         ObjectNode body = Transport.json().createObjectNode();
         body.put("store", name);
-        return Wire.storeSync(boundTransport().post("/v1/state-stores/sync", body));
+        return Wire.storeSync(transport.post("/v1/state-stores/sync", body));
+    }
+
+    /** {@link #rebuild(UUID)} with an auto-generated dedup token. */
+    public StoreSync rebuild() {
+        return rebuild(null);
     }
 
     /**
@@ -294,13 +322,13 @@ public final class StateStore {
      * source history; {@code token} dedupes a retried rebuild's already
      * committed mutations. Manual stores refuse (they have no source).
      */
-    public dev.whitewater.model.StoreSync rebuild(UUID token) {
+    public StoreSync rebuild(UUID token) {
         ObjectNode body = Transport.json().createObjectNode();
         body.put("store", name);
         if (token != null) {
             body.put("token", token.toString());
         }
-        return Wire.storeSync(boundTransport().post("/v1/state-stores/rebuild", body));
+        return Wire.storeSync(transport.post("/v1/state-stores/rebuild", body));
     }
 
     /** Tombstone the store: the name cannot be recreated and every data
@@ -314,6 +342,25 @@ public final class StateStore {
         command.put("kind", "state_store");
         command.put("name", name);
         commands.add(command);
-        return Wire.controlExecution(boundTransport().post("/v1/admin/commands", body));
+        return Wire.controlExecution(transport.post("/v1/admin/commands", body));
+    }
+
+    private StoreRow<K, V> typed(StoreRow<byte[], byte[]> row) {
+        return new StoreRow<>(
+                keyCodec.decode(row.key()),
+                payloadCodec.decode(row.payload()),
+                row.appliedCursor(),
+                row.freshness());
+    }
+
+    private StoreRows<K, V> typed(StoreRows<byte[], byte[]> rows) {
+        List<StoreRow<K, V>> mapped = new ArrayList<>(rows.rows().size());
+        rows.rows().forEach(row -> mapped.add(typed(row)));
+        return new StoreRows<>(List.copyOf(mapped), rows.freshness());
+    }
+
+    /** The default binding: String keys, raw byte[] payloads. */
+    static StateStore<String, byte[]> defaults(Transport transport, String name) {
+        return bound(transport, name, Codecs.utf8(), Codecs.bytes());
     }
 }
