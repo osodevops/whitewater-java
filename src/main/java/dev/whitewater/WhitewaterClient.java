@@ -582,6 +582,74 @@ public final class WhitewaterClient implements AutoCloseable {
         return transport.get("/v1/admin/demand/" + surface);
     }
 
+    /**
+     * Bind a declared Pipe for lifecycle operations: {@code describe}
+     * reports the live catalog row while {@code pause}/{@code resume}/
+     * {@code drop} drive the same typed commands WCL lowers to.
+     */
+    public Pipe pipe(String name) {
+        return Pipe.bind(this, name);
+    }
+
+    /** {@code SHOW PIPES} decoded as {@link dev.whitewater.model.PipeInfo} rows. */
+    public java.util.List<dev.whitewater.model.PipeInfo> pipes() {
+        return Pipe.list(this);
+    }
+
+    /** {@code GET /v1/admin/demand/feeds} — per-Feed counters plus the per-Domain rollup. */
+    public dev.whitewater.model.DemandReport demandFeeds() {
+        return demandReport("feeds", "feed");
+    }
+
+    /** {@code GET /v1/admin/demand/readers} — per-Reader counters plus rollup. */
+    public dev.whitewater.model.DemandReport demandReaders() {
+        return demandReport("readers", "reader");
+    }
+
+    /** {@code GET /v1/admin/demand/subscriptions} — per-Subscription counters plus rollup. */
+    public dev.whitewater.model.DemandReport demandSubscriptions() {
+        return demandReport("subscriptions", "subscription");
+    }
+
+    /** {@code GET /v1/admin/demand/indexes} — per-Index counters plus rollup. */
+    public dev.whitewater.model.DemandReport demandIndexes() {
+        return demandReport("indexes", "index");
+    }
+
+    /** {@code GET /v1/admin/demand/pipes} — per-Pipe counters plus rollup. */
+    public dev.whitewater.model.DemandReport demandPipes() {
+        return demandReport("pipes", "pipe");
+    }
+
+    /** {@code GET /v1/admin/demand/hot-keys} — dominant-Key evidence across live ranges. */
+    public java.util.List<dev.whitewater.model.HotKey> hotKeys() {
+        var body = transport.get("/v1/admin/demand/hot-keys");
+        var rows = body == null ? null : body.get("hot_keys");
+        var keys = new java.util.ArrayList<dev.whitewater.model.HotKey>();
+        if (rows != null && rows.isArray()) {
+            rows.forEach(row -> keys.add(new dev.whitewater.model.HotKey(row)));
+        }
+        return keys;
+    }
+
+    private dev.whitewater.model.DemandReport demandReport(String surface, String nameField) {
+        var body = demand(surface);
+        var rowsNode = body == null ? null : body.get(surface);
+        var rows = new java.util.ArrayList<dev.whitewater.model.DemandRow>();
+        if (rowsNode != null && rowsNode.isArray()) {
+            rowsNode.forEach(row -> {
+                var name = row.path(nameField).asText("");
+                var domain = row.path("domain");
+                rows.add(new dev.whitewater.model.DemandRow(
+                        name,
+                        domain.isTextual() ? domain.asText() : null,
+                        row));
+            });
+        }
+        return new dev.whitewater.model.DemandReport(
+                rows, body == null ? null : body.get("domains"));
+    }
+
     /** A Subscription's committed-progress view (for operators). */
     public JsonNode subscriptionProgress(String name) {
         String path = "/v1/admin/subscriptions/progress?name="

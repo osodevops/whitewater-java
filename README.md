@@ -79,6 +79,45 @@ Cursors are opaque: the SDK never parses, orders, or constructs them.
 `event_time_ns`/`ingest_time_ns` are signed 64-bit nanoseconds and travel
 as decimal strings on the wire.
 
+## Pipes, indexes, and operations
+
+Managed Pipes and replicated Indexes share the same topology-free model —
+names, never partitions or Nodes:
+
+```java
+// Pipe lifecycle: describe, pause, resume, drop.
+var pipe = client.pipe("orders.relay");
+PipeInfo info = pipe.describe();   // stage, operation, outputs, status
+pipe.pause();
+pipe.resume();
+List<PipeInfo> all = client.pipes();
+
+// Index queries: exact, prefix, or range predicates over decoded rows.
+IndexPage page = client.queryIndex(
+        "crm.byregion",
+        IndexPredicate.range(
+                List.of("emea"),
+                IndexPredicate.IndexBound.inclusive(0),
+                IndexPredicate.IndexBound.exclusive(99)),
+        50,        // limit
+        true,      // strict: wait for the committed target rather than stale
+        null);     // wait_ms
+for (var row : page.rows()) { /* key + payload bytes, applied cursor */ }
+
+// Demand observability: typed rows + raw domain rollups.
+DemandReport feeds = client.demandFeeds();
+for (DemandRow row : feeds.rows()) {
+    long appended = row.counter("appended_records");
+}
+client.demandReaders(); client.demandSubscriptions();
+client.demandIndexes();  client.demandPipes();
+List<HotKey> hot = client.hotKeys();   // dominant-key evidence per feed
+```
+
+Pipe operation definitions stay opaque JSON so server-side operation
+variants evolve without an SDK bump; `queryIndex` and the raw
+`demand(surface)` JsonNode methods remain the escape hatches.
+
 ## Build
 
 ```powershell
