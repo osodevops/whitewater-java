@@ -539,26 +539,12 @@ class ConformanceRunnerIT {
         }
     }
 
-    private Object decodeIndexValue(JsonNode node) {
-        if (node == null || !node.isObject() || !node.hasNonNull("kind")) {
-            return node == null ? null : node.asText();
-        }
-        return switch (node.get("kind").asText()) {
-            case "null" -> null;
-            case "bool" -> node.path("value").asBoolean();
-            case "i64" -> node.path("value").asLong();
-            case "text" -> node.path("value").asText();
-            case "bytes" -> Wire.b64(node.path("value_base64").asText());
-            default -> throw new IllegalArgumentException("unknown value kind " + node);
-        };
-    }
-
     private Map<String, String> readPositions(JsonNode node) {
         if (node == null || !node.isObject()) {
             return Map.of();
         }
         Map<String, String> positions = new LinkedHashMap<>();
-        node.fields().forEachRemaining(e -> positions.put(e.getKey(), e.getValue().asText()));
+        node.properties().forEach(e -> positions.put(e.getKey(), e.getValue().asText()));
         return positions;
     }
 
@@ -588,7 +574,7 @@ class ConformanceRunnerIT {
             return Map.of();
         }
         Map<String, byte[]> metadata = new LinkedHashMap<>();
-        node.fields().forEachRemaining(e -> metadata.put(e.getKey(), decodeBytes(e.getValue())));
+        node.properties().forEach(e -> metadata.put(e.getKey(), decodeBytes(e.getValue())));
         return metadata;
     }
 
@@ -809,7 +795,7 @@ class ConformanceRunnerIT {
                 fail(path + " expected base64-encoded JSON; decode failed: " + e.getMessage());
                 return;
             }
-            expected.get("base64_json").fields().forEachRemaining(entry ->
+            expected.get("base64_json").properties().forEach(entry ->
                     checkExpectation(path + "{" + entry.getKey() + "}",
                             pathGet(decoded, entry.getKey()), entry.getValue()));
             return;

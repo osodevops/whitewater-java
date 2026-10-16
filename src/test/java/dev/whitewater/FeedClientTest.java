@@ -185,7 +185,7 @@ class FeedClientTest {
         }
         client.feeds().append("orders.created", record);
         assertFalse(Transport.json().readTree(capturedBody).has("use_compression"));
-        WriterSessionClient writer = client.writer("orders.writer", 7);
+        WriterSessionClient writer = client.writerSession("orders.writer", 7);
         var append = new WriterSessionClient.Append(record.requestId(), record.key(), record.payload());
         for (boolean enabled : new boolean[]{false, true, false}) {
             writer = writer.useCompression(enabled);

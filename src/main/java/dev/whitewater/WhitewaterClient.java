@@ -384,7 +384,6 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** A named-Reader session facade under an explicit epoch. */
-    @SuppressWarnings("resource")
     public ReaderSessionClient readerSession(String reader) {
         return new ReaderSessionClient(transport, executor, reader);
     }
@@ -393,6 +392,7 @@ public final class WhitewaterClient implements AutoCloseable {
      * A session-bound named Reader: opens the session internally and
      * tracks the delivered Cursor for {@link Reader#ack()}.
      */
+    @SuppressWarnings("resource")
     public Reader reader(String name, int capacity) {
         return new Reader(transport, executor, name).open(capacity);
     }

@@ -80,7 +80,7 @@ public final class Subscription implements AutoCloseable {
             Consumer<List<FeedRecord>> onRecords) {
         try {
             ensureReader(client, readerName, feed, start);
-            var reader = client.reader(readerName);
+            var reader = client.readerSession(readerName);
             var session = openWithRetry(reader, capacity);
             if (session == null) {
                 return;         // stopped while waiting to open
