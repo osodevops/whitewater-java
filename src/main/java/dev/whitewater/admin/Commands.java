@@ -4,8 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.whitewater.internal.Transport;
-import dev.whitewater.model.EnrichMiss;
-import dev.whitewater.model.EnrichFreshness;
 import dev.whitewater.model.ExhaustedPolicy;
 import dev.whitewater.model.Extractor;
 import dev.whitewater.model.GrantEffect;

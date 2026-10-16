@@ -143,7 +143,7 @@ public final class SubscriptionMemberClient {
         }
         JsonNode response = transport.post("/v1/subscriptions/members/fetch", body);
         Map<String, String> positions = new LinkedHashMap<>();
-        response.path("positions").fields().forEachRemaining(entry ->
+        response.path("positions").properties().forEach(entry ->
                 positions.put(entry.getKey(), entry.getValue().asText()));
         JsonNode nextDelivery = response.path("next_delivery_ns");
         JsonNode exhausted = response.path("exhausted");

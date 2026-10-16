@@ -73,7 +73,7 @@ public record IndexPredicate(
      */
     public void flattenInto(ObjectNode request) {
         request.put("mode", mode);
-        innerWire().fields().forEachRemaining(entry -> request.set(entry.getKey(), entry.getValue()));
+        innerWire().properties().forEach(entry -> request.set(entry.getKey(), entry.getValue()));
     }
 
     private ObjectNode innerWire() {

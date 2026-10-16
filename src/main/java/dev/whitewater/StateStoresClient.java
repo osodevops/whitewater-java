@@ -101,6 +101,6 @@ public final class StateStoresClient {
 
     /** Tombstone the named store. */
     public ControlExecution drop(String name) {
-        return StateStore.<String, byte[]>defaults(transport, name).drop();
+        return StateStore.defaults(transport, name).drop();
     }
 }

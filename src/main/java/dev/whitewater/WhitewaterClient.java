@@ -384,6 +384,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** A named-Reader session facade under an explicit epoch. */
+    @SuppressWarnings("resource")
     public ReaderSessionClient readerSession(String reader) {
         return new ReaderSessionClient(transport, executor, reader);
     }

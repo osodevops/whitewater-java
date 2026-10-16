@@ -84,6 +84,11 @@ public final class Member {
         return memberEpoch;
     }
 
+    /** The subscription ownership epoch this member joined under. */
+    public long ownershipEpoch() {
+        return ownershipEpoch;
+    }
+
     /** Claim a work item under a bounded lease; auto work identity. */
     public Work claim() {
         return claim(UUID.randomUUID(), null);
@@ -134,7 +139,7 @@ public final class Member {
         }
         JsonNode response = transport.post("/v1/subscriptions/members/fetch", body);
         Map<String, String> positions = new LinkedHashMap<>();
-        response.path("positions").fields().forEachRemaining(entry ->
+        response.path("positions").properties().forEach(entry ->
                 positions.put(entry.getKey(), entry.getValue().asText()));
         JsonNode nextDelivery = response.path("next_delivery_ns");
         return new Page(

@@ -27,7 +27,7 @@ public final class Wire {
             return Map.of();
         }
         Map<String, byte[]> metadata = new LinkedHashMap<>();
-        node.fields().forEachRemaining(entry ->
+        node.properties().forEach(entry ->
                 metadata.put(entry.getKey(), b64(entry.getValue().asText())));
         return Map.copyOf(metadata);
     }
@@ -277,7 +277,7 @@ public final class Wire {
 
     public static MemberState memberState(JsonNode node) {
         Map<String, Long> memberEpochs = new LinkedHashMap<>();
-        node.path("member_epochs").fields().forEachRemaining(entry ->
+        node.path("member_epochs").properties().forEach(entry ->
                 memberEpochs.put(entry.getKey(), entry.getValue().asLong()));
         return new MemberState(
                 node.path("subscription").asText(),
@@ -289,7 +289,7 @@ public final class Wire {
 
     public static SeekResult seekResult(JsonNode node) {
         Map<String, String> positions = new LinkedHashMap<>();
-        node.path("positions").fields().forEachRemaining(entry ->
+        node.path("positions").properties().forEach(entry ->
                 positions.put(entry.getKey(), entry.getValue().asText()));
         return new SeekResult(
                 node.path("request_id").isTextual()
