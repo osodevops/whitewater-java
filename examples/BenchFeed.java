@@ -44,7 +44,12 @@ public class BenchFeed {
         if (raw == null || raw.isBlank()) {
             raw = "http://localhost:7771,http://localhost:7772,http://localhost:7773";
         }
-        return Arrays.stream(raw.split(",")).map(String::trim).map(URI::create).toList();
+        return Arrays.stream(raw.split("[,;]"))
+                .map(String::trim)
+                .filter(item -> !item.isEmpty())
+                .map(item -> item.contains("://") ? item : "http://" + item)
+                .map(URI::create)
+                .toList();
     }
 
     /** Shared JSON result contract with the Python/Kafka drivers. */
@@ -81,7 +86,7 @@ public class BenchFeed {
     }
 
     public static void main(String[] args) throws Exception {
-        int records = envInt("BENCH_RECORDS", 20000);
+        int records = envInt("BENCH_RECORDS", 2000);
         int bytes = envInt("BENCH_BYTES", 1024);
         int writers = envInt("BENCH_WRITERS", 4);
         int batch = Math.max(1, envInt("BENCH_BATCH", 50));
@@ -110,33 +115,57 @@ public class BenchFeed {
             // so concurrent producers keep disjoint shares and keyspaces.
             var latencies = new ConcurrentLinkedQueue<Long>();
             var errors = new CopyOnWriteArrayList<Exception>();
+            var acknowledged = new java.util.concurrent.atomic.AtomicLong();
+            var refused = new java.util.concurrent.atomic.AtomicLong();
+            int attempts = envInt("BENCH_BATCH_ATTEMPTS", 8);
             var threads = new ArrayList<Thread>();
             int per = records / writers, extra = records % writers;
             long started = System.nanoTime();
             for (int w = 0; w < writers; w++) {
                 int share = per + (w < extra ? 1 : 0);
                 long offset = (long) w * records;
-                FeedWriter<String, byte[]> writer = feed.writer("benchw-" + w);
+                FeedWriter<String, byte[]> writer = feed.writer("benchw" + w);
                 Thread thread = new Thread(() -> {
-                    try {
-                        for (int sent = 0; sent < share; ) {
-                            int take = Math.min(batch, share - sent);
-                            var events = new ArrayList<FeedEvent<String, byte[]>>(take);
-                            for (int i = 0; i < take; i++) {
-                                events.add(new FeedEvent<>(
-                                        String.format("key-%012d", offset + sent + i), payload));
-                            }
-                            long t0 = System.nanoTime();
-                            if (take > 1) {
-                                writer.appendBatch(events);
-                            } else {
-                                writer.append(events.get(0));
-                            }
-                            latencies.add(System.nanoTime() - t0);
-                            sent += take;
+                    for (int sent = 0; sent < share; ) {
+                        int take = Math.min(batch, share - sent);
+                        // Events are built once per attempt set — pinned
+                        // request_ids make a retry after an ambiguous
+                        // failure deduplicate server-side.
+                        var events = new ArrayList<FeedEvent<String, byte[]>>(take);
+                        for (int i = 0; i < take; i++) {
+                            events.add(new FeedEvent<>(
+                                    String.format("key-%012d", offset + sent + i), payload));
                         }
-                    } catch (Exception error) {
-                        errors.add(error);
+                        boolean acked = false;
+                        for (int attempt = 0; attempt < attempts && !acked; attempt++) {
+                            long t0 = System.nanoTime();
+                            try {
+                                if (take > 1) {
+                                    writer.appendBatch(events);
+                                } else {
+                                    writer.append(events.get(0));
+                                }
+                                acked = true;
+                            } catch (Exception error) {
+                                if (attempt == attempts - 1) {
+                                    errors.add(error);
+                                }
+                                try {
+                                    Thread.sleep(1000);
+                                } catch (InterruptedException interrupted) {
+                                    Thread.currentThread().interrupt();
+                                    return;
+                                }
+                            } finally {
+                                latencies.add(System.nanoTime() - t0);
+                            }
+                        }
+                        if (acked) {
+                            acknowledged.addAndGet(take);
+                        } else {
+                            refused.addAndGet(take);
+                        }
+                        sent += take;
                     }
                 });
                 thread.start();
@@ -146,12 +175,18 @@ public class BenchFeed {
                 thread.join();
             }
             double seconds = (System.nanoTime() - started) / 1e9;
-            String json = resultJson("write", records, bytes, seconds,
+            long ackedRecords = acknowledged.get();
+            String json = resultJson("write", ackedRecords, bytes, seconds,
                     new ArrayList<>(latencies), writers, batch);
+            json = json.substring(0, json.length() - 1) + String.format(
+                    java.util.Locale.ROOT,
+                    ",\"requested\":%d,\"refused\":%d,\"errors\":%d}",
+                    records, refused.get(), errors.size());
             System.out.println("BENCH_RESULT " + json);
             System.out.printf(java.util.Locale.ROOT,
-                    "  whitewater-java write: %,.0f records/s errors=%d%n",
-                    seconds > 0 ? records / seconds : 0, errors.size());
+                    "  whitewater-java write: %,.0f records/s acked=%d refused=%d errors=%d%n",
+                    seconds > 0 ? ackedRecords / seconds : 0,
+                    ackedRecords, refused.get(), errors.size());
             for (Exception error : errors) {
                 error.printStackTrace();
             }
