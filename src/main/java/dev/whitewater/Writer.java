@@ -111,6 +111,10 @@ public final class Writer {
         return writer;
     }
 
+    Executor executor() {
+        return executor;
+    }
+
     /** The session's fencing epoch. */
     public long sessionEpoch() {
         return sessionEpoch;

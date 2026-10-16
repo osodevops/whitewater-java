@@ -348,9 +348,65 @@ public final class WhitewaterClient implements AutoCloseable {
         return dotted(name);
     }
 
+    Transport transport() {
+        return transport;
+    }
+
+    Executor executor() {
+        return executor;
+    }
+
     /** Ad-hoc Feed operations: committed reads, temporary fetches, appends. */
     public FeedClient feeds() {
         return new FeedClient(transport, executor);
+    }
+
+    /**
+     * A typed facade over Feed {@code name} — the immutable temporal
+     * history on the Nodes. The default binding takes String keys and
+     * {@code byte[]} payloads; the overloads bind
+     * {@link dev.whitewater.model.Codec}s so the SDK serializes
+     * keys/payloads for you in both directions:
+     * <pre>{@code
+     * Feed<String, Order> orders = client.feed("orders.events", Order.class);
+     * orders.writer("orders.ingest").append("order-1", order);   // encoded
+     * try (var reader = orders.reader("orders.audit", 64)) {
+     *     Order o = reader.fetch().records().get(0).value();      // decoded
+     * }
+     * }</pre>
+     */
+    public Feed<String, byte[]> feed(String name) {
+        return Feed.bound(this, name,
+                dev.whitewater.model.Codecs.utf8(), dev.whitewater.model.Codecs.bytes());
+    }
+
+    /**
+     * {@link #feed(String)} with String keys and payloads of
+     * {@code valueType} — {@code String}, {@code byte[]},
+     * {@link com.fasterxml.jackson.databind.JsonNode}, or any
+     * Jackson-mapped class.
+     */
+    public <V> Feed<String, V> feed(String name, Class<V> valueType) {
+        return feed(name, dev.whitewater.model.Codecs.forClass(valueType));
+    }
+
+    /** {@link #feed(String)} with String keys and a typed payload Codec. */
+    public <V> Feed<String, V> feed(String name, dev.whitewater.model.Codec<V> valueCodec) {
+        return Feed.bound(this, name, dev.whitewater.model.Codecs.utf8(), valueCodec);
+    }
+
+    /** {@link #feed(String, Class)} with a typed key class too. */
+    public <K, V> Feed<K, V> feed(String name, Class<K> keyType, Class<V> valueType) {
+        return feed(
+                name,
+                dev.whitewater.model.Codecs.forClass(keyType),
+                dev.whitewater.model.Codecs.forClass(valueType));
+    }
+
+    /** {@link #feed(String)} with explicit key and payload Codecs. */
+    public <K, V> Feed<K, V> feed(
+            String name, dev.whitewater.model.Codec<K> keyCodec, dev.whitewater.model.Codec<V> valueCodec) {
+        return Feed.bound(this, name, keyCodec, valueCodec);
     }
 
     /**

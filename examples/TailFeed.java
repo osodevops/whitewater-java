@@ -1,14 +1,9 @@
 import dev.whitewater.WhitewaterClient;
 import dev.whitewater.model.Cursor;
-import dev.whitewater.model.FeedAppend;
-import dev.whitewater.model.FeedRecord;
 import dev.whitewater.model.TemporaryFetchOptions;
 
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -32,15 +27,15 @@ public class TailFeed {
         //    like {"command": "show", "kind": "feeds"}).
         client.wcl("CREATE DOMAIN demo; CREATE FEED demo.tail");
 
+        // UTF-8 binding: appended text comes back as text on every fetch.
+        var tail = client.feed("demo.tail", String.class);
+
         // 2. Append a record 3s from now so we can watch the tail WAIT, then return.
         new Thread(() -> {
             try {
                 Thread.sleep(3000);
-                var result = client.feeds().append("demo.tail", new FeedAppend(
-                        UUID.randomUUID(), UUID.randomUUID(), 1, 1,
-                        "key-1".getBytes(StandardCharsets.UTF_8),
-                        "hello whitewater".getBytes(StandardCharsets.UTF_8),   // low-level API: raw bytes
-                        null, Map.of()));
+                var result = tail.append(UUID.randomUUID(), 1, 1,
+                        "key-1", "hello whitewater");
                 System.out.println(">>> appended, cursor=" + result.cursor().value());
             } catch (Exception e) {
                 e.printStackTrace();
@@ -54,13 +49,12 @@ public class TailFeed {
         long deadline = System.currentTimeMillis() + Duration.ofSeconds(10).toMillis();
         while (System.currentTimeMillis() < deadline) {
             long sent = System.currentTimeMillis();
-            var page = client.feeds().temporaryFetch("demo.tail",
-                    TemporaryFetchOptions.tail(after, 50, 2500));
+            var page = tail.fetch(TemporaryFetchOptions.tail(after, 50, 2500));
             long waited = System.currentTimeMillis() - sent;
 
-            for (FeedRecord r : page.records()) {
+            for (var m : page.records()) {
                 System.out.printf("got record after %dms wait: %s  ingest_ns=%s%n",
-                        waited, r.payloadText(), r.ingestTimeNs());
+                        waited, m.value(), m.ingestTimeNs());
             }
             if (page.records().isEmpty()) {
                 System.out.printf("(still waiting... fetch returned empty after %dms)%n", waited);

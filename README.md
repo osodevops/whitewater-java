@@ -31,7 +31,8 @@ WhitewaterClient client = WhitewaterClient.builder()
 | `client.seekSubscription(name, position, ts, cursor)` | Operator reposition of a Subscription's shared frontier — refused while a member work lease is active |
 | `client.subscriptionMemberState(name)` | Authoritative member state: ownership epoch, per-member epochs, live leases |
 | `client.queryIndex(name, predicate)` | `exact` / `prefix` / `range` reads against an activated Index generation, with applied-vs-target freshness evidence |
-| `client.feeds()` | Committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends, `load(feed, start, sink)` one-shot history reads |
+| `client.feed(name[, type/codec])` | **Typed feed facade**: binds `Codec`s once so keys/payloads serialize automatically in both directions — `feed.writer(name)` (declares + opens a session), `feed.reader(name, capacity)` (decoded `fetch`/`ack`), `feed.fetch`/`records`/`load` (decoded ad-hoc reads), `feed.subscribe` (decoded batches). Same codec vocabulary as `stateStore`: `String`/`byte[]`/`JsonNode`/Jackson classes out of the box, protobuf/Avro/custom via `dev.whitewater.codec`/`Codecs.of` |
+| `client.feeds()` | Raw-byte ad-hoc Feed operations: committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends, `load(feed, start, sink)` one-shot history reads — the escape hatch under `client.feed(...)` |
 | `client.subscribe(reader, feed, start, onRecords)` | Managed durable consume: provisions the Reader, runs open → fetch → deliver → ack on a background thread; `Subscription.close()` to stop |
 | `client.stateStore(name[, type/codec])` / `client.stateStores()` | Typed server-side StateStore facade — durable RF3 rows on the Nodes, serialized by class (String/JSON) or bound `Codec`s (String keys + `byte[]` payloads by default): `put`/`get`/`getBy`/`iterate`/`delete`/`clear`/`drop`/`sync()`/`rebuild()`. Optional protobuf/Avro codecs in `dev.whitewater.codec` |
 | `client.health()` / `client.checkCompatible()` | Liveness plus the protocol block (`major`/`minor`) and advertised transport limits; `checkCompatible()` refuses a major-version mismatch |
@@ -50,6 +51,20 @@ store.iterate(r -> export(r));
 `client.stateStore(name)` binds String keys + `byte[]` payloads by
 default; `client.stateStore(name, Codecs.json(Employee.class))` puts and
 reads back your own objects — no `getBytes()` in application code.
+`client.feed(name, Employee.class)` binds Feeds the same way: writers
+serialize, readers/fetches/subscriptions deserialize, and the codec
+vocabulary (UTF-8, raw bytes, JSON classes, protobuf, Avro, custom) is
+shared across feeds and stores:
+
+```java
+Feed<String, Order> orders = client.feed("demo.orders", Order.class);
+orders.writer("ingest").append("order-1", new Order("order-1", 42));
+try (var reader = orders.reader("audit", 64)) {
+    Order o = reader.fetch().records().get(0).value();   // decoded
+}
+StateStore<String, Order> latest = client.stateStore("demo.orders_latest", Order.class);
+latest.put("order-1", order);                            // same codec seam
+```
 
 The store lives on the Nodes — the SDK holds no local copy. See
 [docs/stores.md](docs/stores.md) for the full store guide.

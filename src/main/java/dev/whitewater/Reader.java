@@ -58,6 +58,10 @@ public final class Reader implements AutoCloseable {
         return reader;
     }
 
+    Executor executor() {
+        return executor;
+    }
+
     /** The session's fencing epoch. */
     public long sessionEpoch() {
         return session == null ? -1 : session.sessionEpoch();

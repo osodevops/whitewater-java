@@ -1,0 +1,36 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["17", "21"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Unit tests
+        run: mvn -B verify
+        # LiveSdkIT / LiveStoreIT / ConformanceRunnerIT self-skip without
+        # WHITEWATER_ENDPOINTS — the unit corpus is the gate here.
+
+      - name: Compile examples against the built jar
+        run: |
+          mvn -B -q dependency:build-classpath -Dmdep.outputFile=/tmp/cp.txt
+          javac -cp "target/classes:$(cat /tmp/cp.txt)" -d /tmp/examples-out examples/*.java
