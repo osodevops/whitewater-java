@@ -72,6 +72,47 @@ public final class Transport {
         });
     }
 
+    /** One HTTP exchange as status + parsed body, without error mapping. */
+    public record Reply(int status, JsonNode body) {}
+
+    /**
+     * Send a request and return the raw {@link Reply} instead of mapping
+     * non-2xx responses to typed exceptions. Conformance-style callers that
+     * must observe the wire status (e.g. {@code error_status} assertions)
+     * use this; application code should prefer {@link #get}/{@link #post}.
+     */
+    public Reply exchange(String method, String path, JsonNode body) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint().resolve(path))
+                .method(method, body == null
+                        ? HttpRequest.BodyPublishers.noBody()
+                        : publish(body))
+                .header("authorization", "Bearer " + apiKey)
+                .header("accept", "application/json")
+                .timeout(Duration.ofSeconds(60));
+        if (body != null) {
+            builder.header("content-type", "application/json");
+        }
+        HttpResponse<byte[]> response;
+        try {
+            response = http.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException e) {
+            throw new WhitewaterException.Unavailable(0, null,
+                    "Node unreachable: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new WhitewaterException.Unavailable(0, null, "interrupted while awaiting response");
+        }
+        return new Reply(response.statusCode(), parse(response.body()));
+    }
+
+    private static HttpRequest.BodyPublisher publish(JsonNode body) {
+        try {
+            return HttpRequest.BodyPublishers.ofByteArray(JSON.writeValueAsBytes(body));
+        } catch (IOException e) {
+            throw new IllegalStateException("request serialization failed", e);
+        }
+    }
+
     private JsonNode roundTrip(java.util.function.Supplier<HttpRequest> requestSupplier) {
         HttpRequest request = requestSupplier.get();
         HttpResponse<byte[]> response;
@@ -102,7 +143,8 @@ public final class Transport {
         }
     }
 
-    static WhitewaterException mapError(int status, JsonNode body) {
+    /** Map a non-2xx {@link Reply} to the typed exception it represents. */
+    public static WhitewaterException mapError(int status, JsonNode body) {
         String message = body.path("error").asText("http " + status);
         String code = body.hasNonNull("code") ? body.get("code").asText() : null;
         if (code != null) {

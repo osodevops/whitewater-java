@@ -233,6 +233,81 @@ public final class Wire {
         return new StoreRows(List.copyOf(rows), freshness);
     }
 
+    public static Health health(JsonNode node) {
+        JsonNode protocol = node.path("protocol");
+        JsonNode limits = node.path("limits");
+        return new Health(
+                node.path("status").asText(),
+                node.path("node_id").asText(null),
+                node.path("members").asInt(0),
+                new Health.Protocol(
+                        protocol.path("major").asInt(0),
+                        protocol.path("minor").asInt(0)),
+                new Health.Limits(
+                        limits.path("max_frame_bytes").asLong(0),
+                        limits.path("max_committed_read_bytes").asLong(0),
+                        limits.path("max_logical_read_frames").asLong(0),
+                        limits.path("max_logical_read_ranges").asLong(0),
+                        limits.path("subscription_member_fetch_max_limit").asLong(0),
+                        limits.path("subscription_member_max_lease_ticks").asLong(0)));
+    }
+
+    public static IndexPage indexPage(JsonNode node) {
+        List<IndexPage.Row> rows = new ArrayList<>();
+        JsonNode list = node.path("rows");
+        if (list.isArray()) {
+            list.forEach(item -> rows.add(new IndexPage.Row(
+                    b64(item.path("key_base64").asText()),
+                    b64(item.path("payload_base64").asText()))));
+        }
+        return new IndexPage(
+                node.path("index").asText(),
+                node.path("index_id").isTextual()
+                        ? UUID.fromString(node.path("index_id").asText()) : null,
+                node.path("generation").asLong(),
+                List.copyOf(rows),
+                node.path("applied_cursor").isNull() ? null
+                        : Cursor.of(node.path("applied_cursor").asText()),
+                node.path("target_cursor").isNull() ? null
+                        : Cursor.of(node.path("target_cursor").asText()),
+                node.path("behind").asBoolean(false),
+                node.path("truncated").asBoolean(false),
+                node.path("served_by").asText());
+    }
+
+    public static MemberState memberState(JsonNode node) {
+        Map<String, Long> memberEpochs = new LinkedHashMap<>();
+        node.path("member_epochs").fields().forEachRemaining(entry ->
+                memberEpochs.put(entry.getKey(), entry.getValue().asLong()));
+        return new MemberState(
+                node.path("subscription").asText(),
+                node.path("ownership_epoch").asLong(),
+                node.path("tick").asLong(),
+                Map.copyOf(memberEpochs),
+                node.path("leases"));
+    }
+
+    public static SeekResult seekResult(JsonNode node) {
+        Map<String, String> positions = new LinkedHashMap<>();
+        node.path("positions").fields().forEachRemaining(entry ->
+                positions.put(entry.getKey(), entry.getValue().asText()));
+        return new SeekResult(
+                node.path("request_id").isTextual()
+                        ? UUID.fromString(node.path("request_id").asText()) : null,
+                Cursor.of(node.path("cursor").asText(null)),
+                Map.copyOf(positions),
+                node.path("ownership_epoch").asLong());
+    }
+
+    public static StoreSync storeSync(JsonNode node) {
+        return new StoreSync(
+                node.path("store_id").isTextual()
+                        ? UUID.fromString(node.path("store_id").asText()) : null,
+                node.path("applied").asLong(),
+                node.path("frontier").isNull() ? null : node.path("frontier").asText(),
+                node.path("complete").asBoolean(false));
+    }
+
     public static StorePage storePage(JsonNode node) {
         List<StoreRow> rows = new ArrayList<>();
         JsonNode list = node.path("rows");

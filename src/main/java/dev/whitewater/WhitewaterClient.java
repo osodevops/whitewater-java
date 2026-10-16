@@ -89,6 +89,32 @@ public final class WhitewaterClient implements AutoCloseable {
         return Wire.controlExecution(transport.post("/v1/admin/commands", body));
     }
 
+    /**
+     * Execute a typed {@link dev.whitewater.admin.Commands} batch — the
+     * fluent, validated form of {@link #commands(List)}:
+     * <pre>{@code
+     * client.commands(Commands.of()
+     *         .createDomain("orders")
+     *         .createFeed("orders.events")
+     *         .defineIndex("orders.events.by-key", "orders.events",
+     *                 List.of(Extractor.recordKey())));
+     * }</pre>
+     */
+    public ControlExecution commands(dev.whitewater.admin.Commands commands) {
+        return commands(commands, UUID.randomUUID());
+    }
+
+    /** Execute a typed command batch under an explicit request identity. */
+    public ControlExecution commands(dev.whitewater.admin.Commands commands, UUID requestId) {
+        var body = Transport.json().createObjectNode();
+        if (requestId != null) {
+            body.put("request_id", requestId.toString());
+        }
+        var array = body.putArray("commands");
+        commands.build().forEach(array::add);
+        return Wire.controlExecution(transport.post("/v1/admin/commands", body));
+    }
+
     public CompletableFuture<ControlExecution> wclAsync(String script) {
         return CompletableFuture.supplyAsync(() -> wcl(script), executor);
     }
@@ -97,6 +123,28 @@ public final class WhitewaterClient implements AutoCloseable {
     public boolean healthy() {
         JsonNode health = transport.get("/health");
         return "ok".equals(health.path("status").asText());
+    }
+
+    /** The contacted Node's full {@code /health} view — protocol level + limits. */
+    public dev.whitewater.model.Health health() {
+        return Wire.health(transport.get("/health"));
+    }
+
+    /**
+     * Verify the contacted Node speaks a compatible protocol major and
+     * return its advertised transport limits. Throws
+     * {@link WhitewaterException.IncompatibleServer} when the major
+     * differs — a silent mismatch is a misrouted deployment, not a
+     * healthy Node.
+     */
+    public dev.whitewater.model.Health checkCompatible() {
+        var health = health();
+        if (health.protocol() != null && health.protocol().major() != PROTOCOL_MAJOR) {
+            throw new WhitewaterException.IncompatibleServer(0, "protocol.incompatible",
+                    "server speaks protocol major " + health.protocol().major()
+                            + "; this SDK speaks " + PROTOCOL_MAJOR);
+        }
+        return health;
     }
 
     // ---- Resource management -------------------------------------------------
@@ -310,22 +358,182 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /**
-     * A Writer session facade. The epoch comes from
-     * {@code OPEN WRITER SESSION <name>} via {@link WhitewaterClient#wcl};
-     * it fences every append in this session.
+     * A session-bound Writer: opens {@code OPEN WRITER SESSION <name>}
+     * internally and returns a handle owning the fencing epoch and
+     * request identities — {@code writer.append(key, payload)} needs no
+     * plumbing. This is the surface applications should use.
      */
-    public WriterSessionClient writer(String writer, long sessionEpoch) {
+    public Writer writer(String name) {
+        return new Writer(transport, executor, name).open();
+    }
+
+    /**
+     * A Writer session facade under an explicit {@code sessionEpoch}
+     * (from {@code OPEN WRITER SESSION <name>}). Prefer {@link
+     * #writer(String)}; this form is for callers managing session state
+     * themselves.
+     */
+    public WriterSessionClient writerSession(String writer, long sessionEpoch) {
         return new WriterSessionClient(transport, executor, writer, sessionEpoch);
     }
 
-    /** A named-Reader session facade. */
-    public ReaderSessionClient reader(String reader) {
+    /**
+     * A Writer session facade under an explicit epoch.
+     * @deprecated use {@link #writer(String)} (session-bound) or
+     * {@link #writerSession(String, long)} (explicit epoch).
+     */
+    @Deprecated
+    public WriterSessionClient writer(String writer, long sessionEpoch) {
+        return writerSession(writer, sessionEpoch);
+    }
+
+    /** A named-Reader session facade under an explicit epoch. */
+    public ReaderSessionClient readerSession(String reader) {
         return new ReaderSessionClient(transport, executor, reader);
     }
 
-    /** A cooperating member of a named Subscription. */
+    /**
+     * A session-bound named Reader: opens the session internally and
+     * tracks the delivered Cursor for {@link Reader#ack()}.
+     */
+    public Reader reader(String name, int capacity) {
+        return new Reader(transport, executor, name).open(capacity);
+    }
+
+    /**
+     * A named-Reader session facade under an explicit epoch.
+     * @deprecated use {@link #reader(String, int)} (session-bound) or
+     * {@link #readerSession(String)} (explicit epoch).
+     */
+    @Deprecated
+    public ReaderSessionClient reader(String reader) {
+        return readerSession(reader);
+    }
+
+    /** A cooperating member of a named Subscription (raw epoch plumbing). */
     public SubscriptionMemberClient subscriptionMember(String subscription) {
         return new SubscriptionMemberClient(transport, subscription);
+    }
+
+    /**
+     * A session-bound Subscription member: joins internally and owns
+     * the member identity, fencing epoch, and lease plumbing —
+     * {@code member.claim() → fetch → ack → release} with no epoch
+     * threading. The surface application workers should use.
+     */
+    public Member member(String subscription) {
+        return new Member(transport, subscription).join();
+    }
+
+    /** A session-bound member under an explicit identity (crash-recovery). */
+    public Member member(String subscription, java.util.UUID memberId) {
+        return new Member(transport, subscription).join(memberId);
+    }
+
+    // ---- Subscription / Index / Node surfaces ------------------------------------
+
+    /**
+     * Reposition a Subscription's shared frontier — an operator action,
+     * refused while any member work lease is active. {@code position}
+     * is {@code beginning}, {@code now}, {@code timestamp}, or
+     * {@code cursor}; {@code timestampNs} is required for timestamp
+     * seeks and {@code cursor} (an opaque record Cursor) for cursor
+     * seeks, which resolve only on a single-range source.
+     */
+    public dev.whitewater.model.SeekResult seekSubscription(
+            String subscription,
+            String position,
+            Long timestampNs,
+            dev.whitewater.model.Cursor cursor) {
+        return seekSubscription(subscription, position, timestampNs, cursor, UUID.randomUUID());
+    }
+
+    /** {@link #seekSubscription} under an explicit request identity — replays idempotently. */
+    public dev.whitewater.model.SeekResult seekSubscription(
+            String subscription,
+            String position,
+            Long timestampNs,
+            dev.whitewater.model.Cursor cursor,
+            UUID requestId) {
+        var body = Transport.json().createObjectNode();
+        body.put("subscription", subscription);
+        body.put("request_id", requestId.toString());
+        body.put("position", position);
+        if (timestampNs != null) {
+            body.put("timestamp_ns", Long.toString(timestampNs));
+        }
+        if (cursor != null) {
+            body.put("cursor", cursor.value());
+        }
+        return Wire.seekResult(transport.post("/v1/subscriptions/seek", body));
+    }
+
+    /** A Subscription's authoritative member state — epochs and live leases. */
+    public dev.whitewater.model.MemberState subscriptionMemberState(String subscription) {
+        String path = "/v1/subscriptions/members/state?subscription="
+                + java.net.URLEncoder.encode(subscription, java.nio.charset.StandardCharsets.UTF_8);
+        return Wire.memberState(transport.get(path));
+    }
+
+    /**
+     * Read an activated Index generation. {@code predicate} is
+     * {@link dev.whitewater.model.IndexPredicate#exact},
+     * {@code #prefix}, or {@code #range}; {@code strict} bounded-waits
+     * ({@code waitMs}) for the serving Node's applied frontier to cover
+     * the committed target rather than answering stale.
+     */
+    public dev.whitewater.model.IndexPage queryIndex(
+            String index,
+            dev.whitewater.model.IndexPredicate predicate,
+            Integer limit,
+            boolean strict,
+            Long waitMs) {
+        var body = Transport.json().createObjectNode();
+        body.put("index", dottedName(index));
+        predicate.flattenInto(body);
+        if (limit != null) {
+            body.put("limit", limit);
+        }
+        body.put("strict", strict);
+        if (waitMs != null) {
+            body.put("wait_ms", waitMs);
+        }
+        return Wire.indexPage(transport.post("/v1/indexes/query", body));
+    }
+
+    /** {@link #queryIndex} with defaults. */
+    public dev.whitewater.model.IndexPage queryIndex(
+            String index, dev.whitewater.model.IndexPredicate predicate) {
+        return queryIndex(index, predicate, null, false, null);
+    }
+
+    /** The contacted Node's self-reported runtime metrics. */
+    public JsonNode nodeMetrics() {
+        return transport.get("/v1/node/metrics");
+    }
+
+    /** The cluster membership view the contacted Node advertises. */
+    public JsonNode clusterMembers() {
+        return transport.get("/v1/cluster/members");
+    }
+
+    /** Demand telemetry for hot keys on {@code feed}. */
+    public JsonNode demandHotKeys(String feed) {
+        String path = "/v1/admin/demand/hot-keys?feed="
+                + java.net.URLEncoder.encode(dottedName(feed), java.nio.charset.StandardCharsets.UTF_8);
+        return transport.get(path);
+    }
+
+    /** Demand telemetry for Pipes / Subscriptions / Readers / Indexes / Feeds. */
+    public JsonNode demand(String surface) {
+        return transport.get("/v1/admin/demand/" + surface);
+    }
+
+    /** A Subscription's committed-progress view (for operators). */
+    public JsonNode subscriptionProgress(String name) {
+        String path = "/v1/admin/subscriptions/progress?name="
+                + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8);
+        return transport.get(path);
     }
 
     /**

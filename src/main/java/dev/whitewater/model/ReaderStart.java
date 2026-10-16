@@ -64,6 +64,24 @@ public final class ReaderStart {
         };
     }
 
+    /**
+     * The typed-command form: {@code {"kind":"beginning"}},
+     * {@code {"kind":"cursor","cursor":"…"}},
+     * {@code {"kind":"timestamp","cursor":<i64ns>}}.
+     */
+    public com.fasterxml.jackson.databind.node.ObjectNode toWire() {
+        var node = new com.fasterxml.jackson.databind.node.JsonNodeFactory(false)
+                .objectNode();
+        switch (kind) {
+            case BEGINNING -> node.put("kind", "beginning");
+            case NOW -> node.put("kind", "now");
+            case CURSOR -> node.put("kind", "cursor").put("cursor", cursor.value());
+            case TIMESTAMP -> node.put("kind", "timestamp")
+                    .put("cursor", timestampNs);
+        }
+        return node;
+    }
+
     private static String escape(String value) {
         return value.replace("'", "''");
     }

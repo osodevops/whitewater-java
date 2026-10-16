@@ -22,13 +22,19 @@ WhitewaterClient client = WhitewaterClient.builder()
 | Client | Covers |
 |---|---|
 | `client` (direct) | WCL (`POST /v1/admin/wcl`), typed commands (`POST /v1/admin/commands`), cluster health — plus typed resource methods (`createDomain`, `createFeed`, `createWriter`, `createReader`, `createSubscription`, `describeFeed`, `renameFeed`, `dropFeed`, `listFeeds`, `seekReader`, `openWriterSession`, …) that build the same WCL for you |
+| `client.commands(Commands.of()…)` | The typed-command vocabulary as a validated fluent builder — Domains, Feeds, Writers, Readers, Subscriptions (feed or Domain source, delivery delay, retry budget), Roles, grants/revocations, API keys, Indexes (`define_index`/`rebuild`/`get_index`), StateStores, Pipes (forward/enrich/window, pause/resume), storage-Node registration/drain/retire/capacity |
 | `ReaderStart` | Reader/Subscription start positions: `beginning()`, `now()`, `cursor(c)`, `timestampNs(ns)` |
-| `client.writer(name, epoch)` | Idempotent single and batch appends (`request_id` dedup) |
-| `client.reader(name)` | Named-Reader sessions: open / fetch / ack / close / resume |
-| `client.subscriptionMember(sub)` | Join, claim, renew, fetch, ack, release under fenced leases |
+| `client.writer(name)` | **Session-bound Writer**: opens `OPEN WRITER SESSION` internally; `append(key, payload)` auto request IDs + epoch, `reopen()` after `StaleSession` |
+| `client.reader(name, capacity)` | **Session-bound Reader**: opens internally; `fetch(limit)` tracks the delivered Cursor so `ack()` commits the right frontier; `close()` releases the fence |
+| `client.member(sub)` | **Session-bound member**: joins internally; `claim() → fetch → ack → release → transfer(work, peer)` with no epoch threading |
+| `client.subscriptionMember(sub)` | Raw member client: explicit `memberId`/`memberEpoch`/`leaseEpoch` plumbing (`join`, `claim`, `renew`, `release`, `transfer`, `fetch`, `ack`, `state()`) |
+| `client.seekSubscription(name, position, ts, cursor)` | Operator reposition of a Subscription's shared frontier — refused while a member work lease is active |
+| `client.subscriptionMemberState(name)` | Authoritative member state: ownership epoch, per-member epochs, live leases |
+| `client.queryIndex(name, predicate)` | `exact` / `prefix` / `range` reads against an activated Index generation, with applied-vs-target freshness evidence |
 | `client.feeds()` | Committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends, `load(feed, start, sink)` one-shot history reads |
 | `client.subscribe(reader, feed, start, onRecords)` | Managed durable consume: provisions the Reader, runs open → fetch → deliver → ack on a background thread; `Subscription.close()` to stop |
-| `client.stateStore(name)` / `client.stateStores()` | Server-side StateStore facade — durable RF3 rows on the Nodes: `put`/`get`/`getBy` (named keys)/`iterate`/`delete`/`clear`/`drop`, plus `define` for declaration |
+| `client.stateStore(name)` / `client.stateStores()` | Server-side StateStore facade — durable RF3 rows on the Nodes: `put`/`get`/`getBy` (named keys, bounded)/`iterate`/`delete`/`clear`/`drop`/`sync()`/`rebuild()` |
+| `client.health()` / `client.checkCompatible()` | Liveness plus the protocol block (`major`/`minor`) and advertised transport limits; `checkCompatible()` refuses a major-version mismatch |
 
 ```java
 var spec = StateStore.named("accounts.employees")

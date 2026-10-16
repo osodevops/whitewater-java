@@ -66,4 +66,11 @@ public class WhitewaterException extends RuntimeException {
             super(status, code, message);
         }
     }
+
+    /** The contacted Node speaks an incompatible protocol major. */
+    public static class IncompatibleServer extends WhitewaterException {
+        public IncompatibleServer(int status, String code, String message) {
+            super(status, code, message);
+        }
+    }
 }

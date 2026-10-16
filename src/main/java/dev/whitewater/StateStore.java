@@ -181,6 +181,18 @@ public final class StateStore {
      * scalar or a {@link List} for multi-component postings.
      */
     public StoreRows getBy(String namedKey, Object value, Integer limit, boolean strict, Long waitMs) {
+        return getBy(namedKey, value, null, null, limit, strict, waitMs);
+    }
+
+    /**
+     * Bounded named-key lookup: {@code lower}/{@code upper} bound the
+     * posting range the lookup scans (inclusive/exclusive), like an
+     * Index range predicate.
+     */
+    public StoreRows getBy(String namedKey, Object value,
+                           dev.whitewater.model.IndexPredicate.IndexBound lower,
+                           dev.whitewater.model.IndexPredicate.IndexBound upper,
+                           Integer limit, boolean strict, Long waitMs) {
         ObjectNode body = Transport.json().createObjectNode();
         body.put("store", name);
         body.put("named_key", namedKey);
@@ -191,6 +203,16 @@ public final class StateStore {
             values.add(Wire.indexValue(value));
         }
         body.put("strict", strict);
+        if (lower != null) {
+            var node = body.putObject("lower");
+            node.set("value", Wire.indexValue(lower.value()));
+            node.put("inclusive", lower.inclusive());
+        }
+        if (upper != null) {
+            var node = body.putObject("upper");
+            node.set("value", Wire.indexValue(upper.value()));
+            node.put("inclusive", upper.inclusive());
+        }
         if (limit != null) {
             body.put("limit", limit);
         }
@@ -254,6 +276,31 @@ public final class StateStore {
         body.put("store", name);
         body.put("mutation_id", (mutationId == null ? UUID.randomUUID() : mutationId).toString());
         return Wire.mutationResult(boundTransport().post("/v1/state-stores/clear", body));
+    }
+
+    /**
+     * Resume a Feed-derived store's replay from its durable frontier,
+     * committing up to the bounded pass limit as journaled mutations.
+     * {@code complete} reports the pass finished outstanding history.
+     */
+    public dev.whitewater.model.StoreSync sync() {
+        ObjectNode body = Transport.json().createObjectNode();
+        body.put("store", name);
+        return Wire.storeSync(boundTransport().post("/v1/state-stores/sync", body));
+    }
+
+    /**
+     * Re-materialize a Feed-derived store from the beginning of retained
+     * source history; {@code token} dedupes a retried rebuild's already
+     * committed mutations. Manual stores refuse (they have no source).
+     */
+    public dev.whitewater.model.StoreSync rebuild(UUID token) {
+        ObjectNode body = Transport.json().createObjectNode();
+        body.put("store", name);
+        if (token != null) {
+            body.put("token", token.toString());
+        }
+        return Wire.storeSync(boundTransport().post("/v1/state-stores/rebuild", body));
     }
 
     /** Tombstone the store: the name cannot be recreated and every data
