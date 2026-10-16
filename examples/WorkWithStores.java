@@ -54,10 +54,6 @@ public class WorkWithStores {
         System.out.println("freshness: " + row.freshness().servedBy()
                 + (row.freshness().behind() ? " (behind)" : ""));
 
-        // mid-flight re-read — the row refreshes its own key:
-        row = row.refreshStrict(Duration.ofSeconds(5));
-        System.out.println("refreshed: " + row.payload().name());
-
         // 5. Named-key group lookup — every eng row.
         var eng = store.getByStrict("department", "eng", Duration.ofSeconds(5));
         eng.rows().forEach(r -> System.out.println("eng: " + r.key() + " -> " + r.payload().name()));

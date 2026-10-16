@@ -62,13 +62,6 @@ class LiveStoreIT {
         assertNotNull(row);
         assertEquals("alice", row.payload());
 
-        // Mid-flight re-read: the row re-reads its own key — strict so the
-        // second write is guaranteed visible.
-        store.put("emp-1", "alice-v2", Map.of("passport", "P111", "department", "eng"));
-        var fresh = row.refreshStrict(Duration.ofSeconds(5));
-        assertNotNull(fresh);
-        assertEquals("alice-v2", fresh.payload());
-
         var eng = store.getByStrict("department", "eng", Duration.ofSeconds(5));
         assertEquals(2, eng.rows().size());
         assertTrue(eng.freshness().appliedSeq() > 0);

@@ -83,14 +83,10 @@ var row = store.get("emp-1");                       // StoreRow<String, Employee
 Employee alice = row.payload();                      // decoded — never getBytes
 String id = row.key();                               // decoded too
 
-var later = row.refresh();                           // re-reads the same key — fast path
-var latest = row.refreshStrict(Duration.ofSeconds(5)); // bounded-waits for the frontier
-// both return null when the row was deleted meanwhile
-
-var fresh = store.getStrict("emp-1");               // same bound, when you hold a key not a row
+var fresh = store.getStrict("emp-1");               // bounded-waits for the committed frontier
 
 var result = store.getBy("department", "eng");
-result.rows();                                       // every match — each row refresh()es too
+result.rows();                                       // every match
 result.freshness().servedBy();                       // which Node answered
 ```
 
@@ -198,7 +194,6 @@ client.commands(Commands.of().defineStateStore(
 | `define` spec + `source` + bare named keys | `IllegalArgumentException` | Feed-sourced keys need an `Extractor` — checked before the call. |
 | `define` manual spec + `Extractor` | `IllegalArgumentException` | Extractors apply to feed-sourced stores only. |
 | Codec decode of a foreign payload | `IllegalArgumentException` | The stored bytes aren't your type — bind the matching `Codec` or `bytes()`. |
-| `row.refresh()` on a detached row | `IllegalStateException` | Only store-produced rows re-read — hand-built rows have no store to call. |
 | `Float`/`Double` named value | `IllegalArgumentException` | The wire carries exact i64 — pass an integral type. |
 | Undeclared named key / missing store | `WhitewaterException` 400 | Server-side contract — fix the declaration. |
 | `mutationId` reused differently | `WhitewaterException` 409 | Retry with the original contents or a fresh ID. |

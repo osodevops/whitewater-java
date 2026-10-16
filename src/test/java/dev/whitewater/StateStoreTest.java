@@ -256,43 +256,7 @@ class StateStoreTest {
         assertEquals(2000, strict.get("wait_ms").asLong());
     }
 
-    @Test
-    void rowRefreshReReadsThroughTheBoundStore() throws Exception {
-        var store = client.stateStore("accounts.employees", Codecs.utf8());
-        var row = store.get("user-1");
-        assertNotNull(row);
 
-        var again = row.refresh();                       // fast re-read, same key
-        assertEquals("payload-1", again.payload());
-        JsonNode fast = lastBody("/v1/state-stores/lookup");
-        assertFalse(fast.get("strict").asBoolean());
-        assertEquals("user-1", new String(java.util.Base64.getDecoder()
-                .decode(fast.get("key_base64").asText())));
-
-        var fresh = row.refreshStrict(java.time.Duration.ofSeconds(3));
-        assertNotNull(fresh);
-        JsonNode strict = lastBody("/v1/state-stores/lookup");
-        assertTrue(strict.get("strict").asBoolean());
-        assertEquals(3000, strict.get("wait_ms").asLong());
-    }
-
-    @Test
-    void rowsFromGetByAndPagesRefreshToo() throws Exception {
-        var store = client.stateStore("accounts.employees", Codecs.utf8());
-        var row = store.getBy("department", "eng").rows().get(0);
-        assertEquals("user-1", row.key());
-        var again = row.refresh();
-        assertNotNull(again);
-        assertEquals("user-1", new String(java.util.Base64.getDecoder()
-                .decode(lastBody("/v1/state-stores/lookup").get("key_base64").asText())));
-    }
-
-    @Test
-    void detachedRowsRefuseToRefresh() {
-        var row = new StoreRow<String, String>("k", "v");
-        var thrown = assertThrows(IllegalStateException.class, row::refresh);
-        assertTrue(thrown.getMessage().contains("detached"));
-    }
 
     @Test
     void jsonBoundStoresDecodeOrFailWithTheTypeNamed() throws Exception {
