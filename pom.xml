@@ -23,6 +23,8 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <jackson.version>2.19.2</jackson.version>
     <junit.version>5.11.4</junit.version>
+    <protobuf.version>3.25.5</protobuf.version>
+    <avro.version>1.11.4</avro.version>
   </properties>
 
   <dependencies>
@@ -30,6 +32,21 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.version}</version>
+    </dependency>
+    <!-- Optional schema codecs: dev.whitewater.codec.ProtobufCodecs /
+         AvroCodecs load these only when a user calls them — core stays
+         Jackson-only and neither dep transits to consumers. -->
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java</artifactId>
+      <version>${protobuf.version}</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.avro</groupId>
+      <artifactId>avro</artifactId>
+      <version>${avro.version}</version>
+      <optional>true</optional>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>

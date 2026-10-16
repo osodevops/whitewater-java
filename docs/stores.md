@@ -38,8 +38,14 @@ StateStore<String, Employee> store = client.stateStore("accounts.employees", Emp
 StateStore<UserKey, Employee> keyed =
         client.stateStore("accounts.employees", UserKey.class, Employee.class);
 
-// Custom serialization (protobuf, your own framing) — explicit Codecs:
+// Protobuf / Avro payloads — optional codec modules (see below):
 StateStore<String, User> proto =
+        client.stateStore("accounts.employees", ProtobufCodecs.of(User.class));
+StateStore<String, User> avro =
+        client.stateStore("accounts.employees", AvroCodecs.specific(User.class));
+
+// Anything else — explicit Codecs:
+StateStore<String, User> custom =
         client.stateStore("accounts.employees", Codecs.of(User::toByteArray, b -> User.parseFrom(b)));
 ```
 
@@ -48,6 +54,30 @@ StateStore<String, User> proto =
 `forClass(Class)` — the mapping the `Class` overloads use.
 `store.view(Other.class)` or `store.view(otherCodecs)` rebinds the same
 store — no wire call.
+
+### Schema codecs — protobuf and Avro
+
+The Riverbed is bytes-only, so schema formats are a client-side
+concern: the SDK's `dev.whitewater.codec` package carries optional
+codec modules that never transit to consumers who don't use them.
+Add the dependency you need alongside the SDK:
+
+```java
+// com.google.protobuf:protobuf-java on your classpath:
+ProtobufCodecs.of(User.class)         // resolves static parseFrom(byte[])
+ProtobufCodecs.of(User.parser())      // explicit Parser
+
+// org.apache.avro:avro on your classpath:
+AvroCodecs.specific(User.class)       // generated SpecificRecord classes
+AvroCodecs.generic(schema)            // GenericRecord over a caller schema
+AvroCodecs.reflect(Pojo.class)        // plain POJOs, no codegen
+```
+
+One caveat: `stateStore(name, Employee.class)` always Jackson-maps —
+`Class` overloads speak JSON, schema formats go through their codec.
+Server-side schema policy (admission validation, compatibility,
+identity) is a Control Plane milestone, not shipped; codec binding is
+the seam it will plug into.
 
 ## Writing
 

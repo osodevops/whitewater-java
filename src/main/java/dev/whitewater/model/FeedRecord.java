@@ -35,6 +35,11 @@ public record FeedRecord(
         return dev.whitewater.model.Codecs.json(type).decode(payload);
     }
 
+    /** The payload decoded through any {@link Codec} — protobuf, Avro, custom. */
+    public <T> T payloadAs(Codec<T> codec) {
+        return codec.decode(payload);
+    }
+
     /** A Metadata entry decoded as UTF-8, or null when absent. */
     public String metadataText(String name) {
         byte[] value = metadata == null ? null : metadata.get(name);
