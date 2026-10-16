@@ -124,6 +124,27 @@ public final class Codecs {
         return JSON_TREE;
     }
 
+    /**
+     * Codec by class: {@code String} is UTF-8, {@code byte[]} is raw
+     * identity, {@link JsonNode} is untyped JSON, and every other type
+     * is Jackson-mapped — so {@code stateStore(name, Employee.class)}
+     * just works without spelling {@code json(...)}.
+     */
+    @SuppressWarnings("unchecked")
+    public static <T> Codec<T> forClass(Class<T> type) {
+        java.util.Objects.requireNonNull(type, "type");
+        if (type == String.class) {
+            return (Codec<T>) UTF8;
+        }
+        if (type == byte[].class) {
+            return (Codec<T>) BYTES;
+        }
+        if (type == JsonNode.class) {
+            return (Codec<T>) JSON_TREE;
+        }
+        return json(type);
+    }
+
     /** A codec from caller-supplied encoder/decoder functions. */
     public static <T> Codec<T> of(Function<T, byte[]> encoder, Function<byte[], T> decoder) {
         java.util.Objects.requireNonNull(encoder, "encoder");

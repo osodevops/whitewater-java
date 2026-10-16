@@ -259,6 +259,17 @@ class StateStoreTest {
 
 
     @Test
+    void classBindingPicksTheCodecWithoutNamingIt() throws Exception {
+        record Payload(String text) {}
+        // stateStore(name, Class) — the JSON codec is chosen from the class.
+        var store = client.stateStore("accounts.employees", Payload.class);
+        store.put("k", new Payload("v"));
+        JsonNode op = lastBody("/v1/state-stores/mutate").get("op");
+        assertEquals("{\"text\":\"v\"}", new String(java.util.Base64.getDecoder()
+                .decode(op.get("payload_base64").asText())));
+    }
+
+    @Test
     void jsonBoundStoresDecodeOrFailWithTheTypeNamed() throws Exception {
         record Payload(String text) {}
         var store = client.stateStore("accounts.employees", Codecs.json(Payload.class));

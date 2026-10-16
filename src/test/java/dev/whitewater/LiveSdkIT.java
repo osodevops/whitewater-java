@@ -2,7 +2,6 @@ package dev.whitewater;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.whitewater.admin.Commands;
-import dev.whitewater.model.Codecs;
 import dev.whitewater.model.IndexPredicate;
 import dev.whitewater.model.IndexPredicate.IndexBound;
 import dev.whitewater.model.ReaderStart;
@@ -196,7 +195,7 @@ class LiveSdkIT {
             // Manual StateStore: put → strict lookup → named get_by →
             // iterate → delete → clear; identical mutation replay dedupes.
             // The typed facade takes String keys/payloads — no byte plumbing.
-            StateStore<String, String> storeApi = client.stateStore(store, Codecs.utf8());
+            StateStore<String, String> storeApi = client.stateStore(store, String.class);
             UUID mutation = UUID.randomUUID();
             var outcome = storeApi.put("acct-1", "{\"tier\":\"gold\"}",
                     Map.of("region", List.of("emea")), mutation);

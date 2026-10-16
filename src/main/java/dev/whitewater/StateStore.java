@@ -80,6 +80,11 @@ public final class StateStore<K, V> {
         return new StateStore<>(transport, name, keyCodec, payloadCodec);
     }
 
+    /** {@link #view(Codec, Codec)} by classes. */
+    public <K2, V2> StateStore<K2, V2> view(Class<K2> keyType, Class<V2> payloadType) {
+        return view(Codecs.forClass(keyType), Codecs.forClass(payloadType));
+    }
+
     /**
      * Insert or replace one row. {@code named} maps a declared named key
      * to a typed value (or a {@link List} for multi-component postings).

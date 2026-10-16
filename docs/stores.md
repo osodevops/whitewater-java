@@ -30,21 +30,24 @@ application sees. `client.stateStore(name)` defaults to String keys and
 // String keys, raw byte[] payloads (the default):
 StateStore<String, byte[]> raw = client.stateStore("accounts.employees");
 
-// String keys, UTF-8 text payloads:
-StateStore<String, String> text = client.stateStore("accounts.employees", Codecs.utf8());
+// Just the class — String is UTF-8, other classes Jackson-map:
+StateStore<String, String> text = client.stateStore("accounts.employees", String.class);
+StateStore<String, Employee> store = client.stateStore("accounts.employees", Employee.class);
 
-// String keys, Jackson-mapped object payloads — objects in, objects out:
-StateStore<String, Employee> store =
-        client.stateStore("accounts.employees", Codecs.json(Employee.class));
-
-// Fully custom: key type too (object keys, protobuf, ...):
+// Key class too — object keys work the same way:
 StateStore<UserKey, Employee> keyed =
-        client.stateStore("accounts.employees", Codecs.json(UserKey.class), Codecs.json(Employee.class));
+        client.stateStore("accounts.employees", UserKey.class, Employee.class);
+
+// Custom serialization (protobuf, your own framing) — explicit Codecs:
+StateStore<String, User> proto =
+        client.stateStore("accounts.employees", Codecs.of(User::toByteArray, b -> User.parseFrom(b)));
 ```
 
 `Codecs` ships `utf8()`, `bytes()`, `json(Class)`/`json(TypeReference)`,
-`jsonTree()`, and `of(encoder, decoder)` for anything else.
-`store.view(otherCodecs)` rebinds the same store — no wire call.
+`jsonTree()`, `of(encoder, decoder)` for anything else, and
+`forClass(Class)` — the mapping the `Class` overloads use.
+`store.view(Other.class)` or `store.view(otherCodecs)` rebinds the same
+store — no wire call.
 
 ## Writing
 

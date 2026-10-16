@@ -580,7 +580,7 @@ public final class WhitewaterClient implements AutoCloseable {
      * serializes keys/payloads for you:
      * <pre>{@code
      * StateStore<String, User> users =
-     *         client.stateStore("app.users", Codecs.json(User.class));
+     *         client.stateStore("app.users", User.class);   // just the class
      * users.put("user-1", user);
      * User back = users.get("user-1").payload();   // no getBytes anywhere
      * }</pre>
@@ -589,9 +589,27 @@ public final class WhitewaterClient implements AutoCloseable {
         return StateStore.defaults(transport, name);
     }
 
+    /**
+     * {@link #stateStore(String)} with String keys and payloads of
+     * {@code payloadType} — {@code String}, {@code byte[]},
+     * {@link com.fasterxml.jackson.databind.JsonNode}, or any
+     * Jackson-mapped class.
+     */
+    public <V> StateStore<String, V> stateStore(String name, Class<V> payloadType) {
+        return stateStore(name, dev.whitewater.model.Codecs.forClass(payloadType));
+    }
+
     /** {@link #stateStore(String)} with String keys and a typed payload Codec. */
     public <V> StateStore<String, V> stateStore(String name, dev.whitewater.model.Codec<V> payloadCodec) {
         return StateStore.bound(transport, name, dev.whitewater.model.Codecs.utf8(), payloadCodec);
+    }
+
+    /** {@link #stateStore(String, Class)} with a typed key class too. */
+    public <K, V> StateStore<K, V> stateStore(String name, Class<K> keyType, Class<V> payloadType) {
+        return stateStore(
+                name,
+                dev.whitewater.model.Codecs.forClass(keyType),
+                dev.whitewater.model.Codecs.forClass(payloadType));
     }
 
     /** {@link #stateStore(String)} with explicit key and payload Codecs. */

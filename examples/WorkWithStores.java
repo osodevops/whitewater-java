@@ -11,9 +11,10 @@ import java.util.Map;
  * Typed StateStore ergonomics: the SDK serializes keys and payloads —
  * no getBytes() in application code.
  *
- * <p>Bind a {@link dev.whitewater.model.Codec} per type: String keys
- * and JSON-mapped object payloads here. {@link Codecs#utf8()} for text,
- * {@link Codecs#bytes()} for raw binary, {@link Codecs#of} for your own.
+ * <p>Bind by class — {@code stateStore(name, String.class, Employee.class)}
+ * picks codecs for you — or pass explicit {@link dev.whitewater.model.Codec}s:
+ * {@link Codecs#utf8()} for text, {@link Codecs#bytes()} for raw binary,
+ * {@link Codecs#of} for your own serialization.
  */
 public class WorkWithStores {
 
@@ -34,9 +35,10 @@ public class WorkWithStores {
                 .addKey("department");                       // non-unique
         client.stateStores().define(spec, null);              // manual store
 
-        // 2. Bind the typed facade: String keys, JSON-mapped payloads.
+        // 2. Bind the typed facade — just name the classes; the SDK
+        //    picks the codec (String -> UTF-8, objects -> Jackson JSON).
         var store = client.stateStore("accounts.employees",
-                Codecs.utf8(), Codecs.json(Employee.class));
+                String.class, Employee.class);
 
         // 3. Write — objects go in, named postings ride along.
         store.put("emp-1", new Employee("alice", "eng", "P111"),

@@ -1,6 +1,5 @@
 package dev.whitewater;
 
-import dev.whitewater.model.Codecs;
 import dev.whitewater.model.StateStoreSpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -51,7 +50,7 @@ class LiveStoreIT {
                 .addKey("passport", true)
                 .addKey("department", false);
         StateStore<String, String> store =
-                client.stateStores().define(spec, null, Codecs.utf8(), Codecs.utf8());
+                client.stateStores().define(spec, null, String.class, String.class);
         assertEquals(domain + ".employees", store.name());
 
         store.put("emp-1", "alice", Map.of("passport", "P111", "department", "eng"));

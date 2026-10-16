@@ -33,7 +33,19 @@ public final class StateStoresClient {
      * values; extractors on a manual store are refused.
      */
     public StateStore<String, byte[]> define(StateStoreSpec spec, String source) {
-        return define(spec, source, null, null);
+        return define(spec, source, (Codec<String>) null, (Codec<byte[]>) null);
+    }
+
+    /**
+     * {@link #define(StateStoreSpec, String)} bound by classes —
+     * {@code String}, {@code byte[]}, {@link com.fasterxml.jackson.databind.JsonNode},
+     * or Jackson-mapped types.
+     */
+    public <K, V> StateStore<K, V> define(
+            StateStoreSpec spec, String source, Class<K> keyType, Class<V> payloadType) {
+        return define(spec, source,
+                dev.whitewater.model.Codecs.forClass(keyType),
+                dev.whitewater.model.Codecs.forClass(payloadType));
     }
 
     /** {@link #define(StateStoreSpec, String)} bound under explicit Codecs. */

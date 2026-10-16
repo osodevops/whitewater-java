@@ -69,6 +69,18 @@ class CodecsTest {
     }
 
     @Test
+    void forClassPicksTheRightCodec() {
+        assertSame(Codecs.utf8().getClass(), Codecs.forClass(String.class).getClass());
+        assertSame(Codecs.bytes(), Codecs.forClass(byte[].class));
+        assertSame(Codecs.jsonTree().getClass(), Codecs.forClass(com.fasterxml.jackson.databind.JsonNode.class).getClass());
+        // Every other class Jackson-maps — just naming the type binds it.
+        Codec<Employee> codec = Codecs.forClass(Employee.class);
+        assertEquals(new Employee("alice", "eng"),
+                codec.decode(codec.encode(new Employee("alice", "eng"))));
+        assertThrows(NullPointerException.class, () -> Codecs.forClass(null));
+    }
+
+    @Test
     void malformedStoredBytesFailAsIllegalArgument() {
         Codec<Employee> codec = Codecs.json(Employee.class);
         var thrown = assertThrows(IllegalArgumentException.class,
