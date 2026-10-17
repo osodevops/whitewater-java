@@ -148,7 +148,7 @@ public final class Subscription implements AutoCloseable {
             WhitewaterClient client, String readerName, String feed, ReaderStart start) {
         try {
             client.createReader(readerName, feed, start);
-        } catch (WhitewaterException.Refused e) {
+        } catch (WhitewaterException.Refused | WhitewaterException.Unavailable e) {
             if (!String.valueOf(e.getMessage()).contains("exists")) {
                 throw e;
             }

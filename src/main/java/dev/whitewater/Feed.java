@@ -230,7 +230,10 @@ public final class Feed<K, V> {
     private void ensureWriter(String writerName) {
         try {
             client.createWriter(writerName, name);
-        } catch (WhitewaterException.Refused e) {
+        } catch (WhitewaterException.Refused | WhitewaterException.Unavailable e) {
+            // The server can surface "already exists" on either subtype
+            // depending on whether the Control Plane verdict or the local
+            // catalog answered.
             if (!String.valueOf(e.getMessage()).contains("exists")) {
                 throw e;
             }
@@ -241,7 +244,7 @@ public final class Feed<K, V> {
     private void ensureReader(String readerName) {
         try {
             client.createReader(readerName, name);
-        } catch (WhitewaterException.Refused e) {
+        } catch (WhitewaterException.Refused | WhitewaterException.Unavailable e) {
             if (!String.valueOf(e.getMessage()).contains("exists")) {
                 throw e;
             }

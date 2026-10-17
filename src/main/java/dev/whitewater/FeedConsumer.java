@@ -126,19 +126,45 @@ public final class FeedConsumer<K, V> implements AutoCloseable {
         try {
             while (running) {
                 Consumer<FeedMessage<K, V>> handler = onRecord;
-                Subscription sub = feed.subscribeTyped(
-                        readerName, start, capacity,
-                        records -> {
-                            for (var record : records) {
-                                try {
-                                    handler.accept(record);
-                                } catch (Exception handlerError) {
-                                    lastError = handlerError;
-                                    throw handlerError;
+                Subscription sub;
+                try {
+                    sub = feed.subscribeTyped(
+                            readerName, start, capacity,
+                            records -> {
+                                for (var record : records) {
+                                    try {
+                                        handler.accept(record);
+                                    } catch (Exception handlerError) {
+                                        lastError = handlerError;
+                                        throw handlerError;
+                                    }
                                 }
-                            }
-                        },
-                        error -> { /* terminal plumbing error → supervised below */ });
+                            },
+                            error -> { /* terminal plumbing error → supervised below */ });
+                } catch (WhitewaterException.Refused e) {
+                    if (!isTransientRefusal(e)) {
+                        throw e;        // refused = fix the request — fail fast
+                    }
+                    if (!running) {
+                        break;
+                    }
+                    report(e);
+                    sleep(backoffMs);
+                    backoffMs = Math.min(backoffMs * 2, maxBackoff.toMillis());
+                    continue;
+                } catch (WhitewaterException e) {
+                    // A transient Control Plane window (quorum timeout,
+                    // leader election) can fault Reader declaration before
+                    // the subscription exists — same supervision as a
+                    // mid-stream plumbing failure.
+                    if (!running) {
+                        break;
+                    }
+                    report(e);
+                    sleep(backoffMs);
+                    backoffMs = Math.min(backoffMs * 2, maxBackoff.toMillis());
+                    continue;
+                }
                 current = sub;
                 awaitTermination(sub);
                 current = null;
@@ -146,7 +172,8 @@ public final class FeedConsumer<K, V> implements AutoCloseable {
                     break;
                 }
                 var failure = sub.failure();
-                if (failure instanceof WhitewaterException.Refused) {
+                if (failure instanceof WhitewaterException.Refused refused
+                        && !isTransientRefusal(refused)) {
                     throw failure;      // refused = fix the request — fail fast
                 }
                 report(failure);
@@ -191,6 +218,19 @@ public final class FeedConsumer<K, V> implements AutoCloseable {
         while (running && sub.isRunning()) {
             sleep(POLL_MS);
         }
+    }
+
+    /**
+     * The server can surface a transient quorum/election window — or a
+     * fenced session epoch that reopening heals — as a refusal on some
+     * command paths. Distinguishable from a real request fault only by
+     * the message until error codes land on those paths.
+     */
+    private static boolean isTransientRefusal(WhitewaterException.Refused e) {
+        String message = String.valueOf(e.getMessage()).toLowerCase();
+        return message.contains("timed out") || message.contains("quorum")
+                || message.contains("unavailable") || message.contains("election")
+                || message.contains("stale");
     }
 
     private void report(WhitewaterException failure) {
