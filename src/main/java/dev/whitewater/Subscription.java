@@ -23,6 +23,8 @@ import java.util.function.Consumer;
  */
 public final class Subscription implements AutoCloseable {
 
+    static final int DEFAULT_CAPACITY = 128;
+
     private static final long EMPTY_POLL_MS = 250;
     private static final long RETRY_MS = 1_000;
 

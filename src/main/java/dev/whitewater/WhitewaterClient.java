@@ -682,9 +682,20 @@ public final class WhitewaterClient implements AutoCloseable {
             ReaderStart start,
             Consumer<List<FeedRecord>> onRecords,
             Consumer<WhitewaterException> onError) {
+        return subscribe(reader, feed, start, SUBSCRIBE_CAPACITY, onRecords, onError);
+    }
+
+    /** {@link #subscribe} with an explicit page capacity. */
+    public Subscription subscribe(
+            String reader,
+            String feed,
+            ReaderStart start,
+            int capacity,
+            Consumer<List<FeedRecord>> onRecords,
+            Consumer<WhitewaterException> onError) {
         Objects.requireNonNull(onRecords, "onRecords");
         var subscription = new Subscription(
-                this, reader, feed, start, SUBSCRIBE_CAPACITY, onRecords, onError);
+                this, reader, feed, start, capacity, onRecords, onError);
         subscription.start();
         return subscription;
     }

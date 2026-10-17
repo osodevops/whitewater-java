@@ -128,6 +128,33 @@ public final class StateStore<K, V> {
         return get(key, false, null);
     }
 
+    // ---- value-level lookups ---------------------------------------------------
+    // The common case wants the decoded value, not the row wrapper —
+    // these strip it. get()/getBy() remain for freshness/appliedCursor.
+
+    /** Primary-key read → the decoded value, or {@code Optional.empty()}. */
+    public java.util.Optional<V> find(K key) {
+        var row = get(key);
+        return row == null ? java.util.Optional.empty()
+                : java.util.Optional.ofNullable(row.payload());
+    }
+
+    /** First named-key match → the decoded value, or
+     * {@code Optional.empty()}. The lookup-fallback shape:
+     * {@code store.find(email).or(() -> store.findBy("user_id", id))}. */
+    public java.util.Optional<V> findBy(String namedKey, Object value) {
+        var rows = getBy(namedKey, value).rows();
+        return rows.isEmpty() ? java.util.Optional.empty()
+                : java.util.Optional.ofNullable(rows.get(0).payload());
+    }
+
+    /** Primary-key read with a fallback for misses — the counter
+     * pattern: {@code store.put(k, store.getOrDefault(k, 0L) + 1)}. */
+    public V getOrDefault(K key, V fallback) {
+        var row = get(key);
+        return row == null || row.payload() == null ? fallback : row.payload();
+    }
+
     /** Bounded-fresh read: waits for the replica to apply its committed frontier. */
     public StoreRow<K, V> getStrict(K key) {
         return get(key, true, null);

@@ -187,10 +187,8 @@ public final class Feed<K, V> {
             ReaderStart start,
             Consumer<List<FeedMessage<K, V>>> onRecords,
             Consumer<WhitewaterException> onError) {
-        return client.subscribe(reader, name, start,
-                records -> onRecords.accept(
-                        records.stream().map(this::decode).toList()),
-                onError);
+        return subscribeTyped(reader, start, Subscription.DEFAULT_CAPACITY,
+                onRecords, onError);
     }
 
     /** {@link #subscribe(String, ReaderStart, Consumer, Consumer)} without an error sink. */
@@ -199,6 +197,27 @@ public final class Feed<K, V> {
             ReaderStart start,
             Consumer<List<FeedMessage<K, V>>> onRecords) {
         return subscribe(reader, start, onRecords, null);
+    }
+
+    /**
+     * A permanent, supervised consumer bound to this feed's named
+     * Reader — per-record delivery, internal restart/backoff, durable
+     * progress, graceful {@link FeedConsumer#close}. See {@link FeedConsumer}.
+     */
+    public FeedConsumer<K, V> consumer(String reader) {
+        return new FeedConsumer<>(this, reader);
+    }
+
+    Subscription subscribeTyped(
+            String reader,
+            ReaderStart start,
+            int capacity,
+            Consumer<List<FeedMessage<K, V>>> onRecords,
+            Consumer<WhitewaterException> onError) {
+        return client.subscribe(reader, name, start, capacity,
+                records -> onRecords.accept(
+                        records.stream().map(this::decode).toList()),
+                onError);
     }
 
     // ---- internals ----------------------------------------------------------

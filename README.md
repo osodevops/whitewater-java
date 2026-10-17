@@ -66,6 +66,40 @@ StateStore<String, Order> latest = client.stateStore("demo.orders_latest", Order
 latest.put("order-1", order);                            // same codec seam
 ```
 
+## Permanent consumers — the Kafka loop, minus the plumbing
+
+`feed.consumer(name)` is the durable-Reader equivalent of
+`while (true) consumer.poll(...)`: per-record delivery, internal
+restart/backoff, durable server-side progress, graceful shutdown.
+
+```java
+var consumer = orders.consumer("enricher")
+        .onRecord(msg -> process(msg))              // one record at a time
+        .onError(err -> log.warn("retrying", err)); // visibility only
+Runtime.getRuntime().addShutdownHook(new Thread(consumer::close));
+consumer.run();          // blocks until close() — that's the whole loop
+```
+
+Semantics: `run()` throws only for *startup* refusals (bad names, auth)
+— Kafka-style fail-fast. After the first open, a dead session re-opens
+and resumes from the Reader's durable acked cursor — the app never
+manages offsets. A handler exception leaves its page unacked so it
+redelivers (at-least-once; route poison pills to a DLQ feed yourself).
+`consumer.runAsync()` runs the same loop on a thread for several
+consumers.
+
+Store lookups strip the row wrapper when you just want the value:
+
+```java
+var user = users.find(email)                         // Optional<UserProfile>
+        .or(() -> users.findBy("user_id", id));      // named-key fallback
+counters.put(bucket, counters.getOrDefault(bucket, 0L) + 1);
+```
+
+A complete enrichment service — read → store lookup + named-key
+fallback → enriched feed or DLQ → counters — is in
+[examples/EnrichUsers.java](examples/EnrichUsers.java).
+
 The store lives on the Nodes — the SDK holds no local copy. See
 [docs/stores.md](docs/stores.md) for the full store guide.
 
