@@ -185,6 +185,20 @@ No local Maven? Docker works:
 docker run --rm -v "${PWD}:/work" -w /work maven:3.9-eclipse-temurin-21 mvn verify
 ```
 
+## Unit-test doubles
+
+`dev.whitewater.testing.FakeRiverbed` is an in-JVM loopback Node that
+models the wire contract — dedupe, ack gating, epoch fencing, StateStore
+named keys — so application tests exercise the real client path.
+
+```java
+try (var riverbed = FakeRiverbed.start();
+     var client = riverbed.client()) { ... }
+```
+
+See `src/test/java/dev/whitewater/testing/FakeRiverbedTest.java` and the
+[testing guide](../whitewater/docs/guides/testing-your-app.md).
+
 ## Conformance
 
 `ConformanceRunnerIT` executes the shared fixture corpus against a real
