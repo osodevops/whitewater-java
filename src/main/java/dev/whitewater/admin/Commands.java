@@ -483,7 +483,8 @@ public final class Commands {
     /**
      * {@code DEFINE PIPE ... TO STATESTORE <store>} — rolling-window
      * aggregation; {@code emitFeed} optionally emits closed panes and
-     * requires the operation declare {@code maxLateNs}.
+     * requires the operation declare a lateness model —
+     * {@code maxLateNs} or {@code watermarkNs}.
      */
     public Commands defineWindowPipe(
             String name,

@@ -259,6 +259,73 @@ class CommandsTest {
     }
 
     @Test
+    void windowPipeSerializesWatermarkAndGrace() {
+        var command = first(Commands.of().defineWindowPipe(
+                "hourly.wm", "orders.audit", "orders.hourlyspend",
+                PipeOperation.window(3_600_000_000_000L,
+                        Extractor.recordKey(),
+                        WindowAggregation.count(),
+                        WindowTime.EVENT, null,
+                        300_000_000_000L, 30_000_000_000L,
+                        7_200_000_000_000L, null, null),
+                "orders.hourlyfeed"));
+        assertEquals("define_pipe", command.path("command").asText());
+        assertEquals("orders.hourlyfeed", command.path("emit_feed").asText());
+        var op = command.path("operation");
+        assertEquals("window", op.path("operation").asText());
+        assertEquals("event", op.path("time").asText());
+        assertEquals("count", op.path("aggregation").path("aggregation").asText());
+        assertFalse(op.hasNonNull("max_late_ns"));
+        assertEquals(300_000_000_000L, op.path("watermark_ns").asLong());
+        assertEquals(30_000_000_000L, op.path("grace_ns").asLong());
+        assertEquals(7_200_000_000_000L, op.path("expire_ns").asLong());
+    }
+
+    @Test
+    void windowWatermarkConvenienceEmitsHorizonAndGrace() {
+        var op = PipeOperation.window(3_600_000_000_000L,
+                        Extractor.recordKey(), WindowAggregation.count(),
+                        300_000_000_000L, 30_000_000_000L)
+                .toWire();
+        assertEquals("window", op.path("operation").asText());
+        assertEquals("event", op.path("time").asText());
+        assertEquals(300_000_000_000L, op.path("watermark_ns").asLong());
+        assertEquals(30_000_000_000L, op.path("grace_ns").asLong());
+        assertFalse(op.hasNonNull("max_late_ns"));
+        assertFalse(op.hasNonNull("expire_ns"));
+
+        var horizonOnly = PipeOperation.window(3_600_000_000_000L,
+                        Extractor.recordKey(), WindowAggregation.count(),
+                        300_000_000_000L)
+                .toWire();
+        assertEquals(300_000_000_000L, horizonOnly.path("watermark_ns").asLong());
+        assertFalse(horizonOnly.hasNonNull("grace_ns"));
+    }
+
+    @Test
+    void windowLatenessModelValidation() {
+        // GRACE requires WATERMARK — revision bounds ride the horizon.
+        assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
+                3_600_000_000_000L, Extractor.recordKey(), WindowAggregation.count(),
+                WindowTime.EVENT, null, null, 30_000_000_000L, null, null, null));
+        // GRACE under MAX_LATE is still a missing watermark.
+        assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
+                3_600_000_000_000L, Extractor.recordKey(), WindowAggregation.count(),
+                WindowTime.EVENT, 60_000_000_000L, null, 30_000_000_000L, null, null, null));
+        // MAX_LATE and WATERMARK are alternative lateness models.
+        assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
+                3_600_000_000_000L, Extractor.recordKey(), WindowAggregation.count(),
+                WindowTime.EVENT, 60_000_000_000L, 300_000_000_000L, null, null, null, null));
+        // WATERMARK follows the event clock only.
+        assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
+                3_600_000_000_000L, Extractor.recordKey(), WindowAggregation.count(),
+                WindowTime.INGEST, null, 300_000_000_000L, null, null, null, null));
+        // The watermark convenience routes through the same checks.
+        assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
+                0L, Extractor.recordKey(), WindowAggregation.count(), 1L));
+    }
+
+    @Test
     void wrongOperationKindRefused() {
         assertThrows(IllegalArgumentException.class, () -> Commands.of()
                 .defineEnrichPipe("p", "s", "a.b", "a.s", PipeOperation.forward(), null));
