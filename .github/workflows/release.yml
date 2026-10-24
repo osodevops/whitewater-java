@@ -1,0 +1,58 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: maven
+
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Release version: ${VERSION}"
+          sh mvnw -B versions:set -DnewVersion="${VERSION}" -DgenerateBackupPoms=false -q
+          ACTUAL=$(grep -o '<version>[^<]*</version>' pom.xml | head -1 | sed -E 's|</?version>||g')
+          if [ "${ACTUAL}" != "${VERSION}" ]; then
+            echo "pom.xml version is '${ACTUAL}', expected '${VERSION}'"
+            exit 1
+          fi
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Build and collect artifacts
+        run: |
+          sh mvnw -B -DskipTests clean package
+          mkdir -p dist
+          for jar in target/*.jar; do
+            case "$(basename "${jar}")" in
+              # Skip the shaded-original backup if a shade plugin is ever added.
+              original-*) ;;
+              *) cp "${jar}" dist/ ;;
+            esac
+          done
+          ls dist/*.jar
+          cp pom.xml "dist/whitewater-client-${VERSION}.pom"
+
+      - name: Checksums
+        run: cd dist && sha256sum * > checksums.txt && cd -
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* \
+            --generate-notes \
+            --title "whitewater-client ${{ env.VERSION }}"
