@@ -18,6 +18,7 @@ import dev.whitewater.model.PipeOperation;
 import dev.whitewater.model.ReaderStart;
 import dev.whitewater.model.ResourceKind;
 import dev.whitewater.model.ShowKind;
+import dev.whitewater.model.Time;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -157,15 +158,19 @@ public final class Commands {
         return add(subscription(name, null, domain, start, null, null));
     }
 
-    /** Full Subscription declaration: source, start, delivery delay, retry budget. */
+    /**
+     * Full Subscription declaration: source, start, delivery delay,
+     * retry budget. {@code deliveryDelay} is a {@link Time} — the SDK
+     * extracts nanoseconds internally for the wire.
+     */
     public Commands createSubscription(
             String name,
             String feed,
             String domain,
             ReaderStart start,
-            Long deliveryDelayNs,
+            Time deliveryDelay,
             ExhaustedPolicy exhaustedPolicy) {
-        return add(subscription(name, feed, domain, start, deliveryDelayNs, exhaustedPolicy));
+        return add(subscription(name, feed, domain, start, deliveryDelay, exhaustedPolicy));
     }
 
     private ObjectNode subscription(
@@ -173,7 +178,7 @@ public final class Commands {
             String feed,
             String domain,
             ReaderStart start,
-            Long deliveryDelayNs,
+            Time deliveryDelay,
             ExhaustedPolicy exhaustedPolicy) {
         if (feed != null && domain != null) {
             throw new IllegalArgumentException(
@@ -188,7 +193,8 @@ public final class Commands {
                 .set("start", (start == null ? ReaderStart.beginning() : start).toWire());
         putIf(node, "feed", feed == null ? null : dotted(feed));
         putIf(node, "domain", domain == null ? null : dotted(domain));
-        putIf(node, "delivery_delay_ns", deliveryDelayNs);
+        putIf(node, "delivery_delay_ns",
+                deliveryDelay == null ? null : deliveryDelay.nanos());
         if (exhaustedPolicy != null) {
             node.set("exhausted_policy", exhaustedPolicy.toWire());
         }

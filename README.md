@@ -132,14 +132,14 @@ client.commands(Commands.of()
         "orders.enrich-dlq")
     .defineWindowPipe("orders.hourly", "orders-sub",
         "stats.orders-hourly",
-        PipeOperation.window(3_600_000_000_000L,   // window_ns: 1h
+        PipeOperation.window(Time.h(1),   // 1h panes
             Extractor.recordKey(), WindowAggregation.count(),
             WindowTime.EVENT,
-            null,                 // max_late_ns
-            300_000_000_000L,     // watermark_ns: 5m horizon
-            30_000_000_000L,      // grace_ns: 30s late revisions
-            7_200_000_000_000L,   // expire_ns
-            null, null),          // key_limit, byte_limit
+            null,                 // maxLate
+            Time.m(5),            // watermark: 5m horizon
+            Time.s(30),           // grace: 30s late revisions
+            Time.h(2),            // expire
+            null, null),          // keyLimit, byteLimit
         "orders.hourly-emitted"));
 
 // Pipe lifecycle: describe, pause, resume, drop.

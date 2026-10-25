@@ -127,42 +127,47 @@ client.commands(Commands.of()
         "orders.sub",
         "ops.order.counts",               // output store (declared above)
         PipeOperation.window(
-                3_600_000_000_000L,                    // window_ns: 1h
+                Time.h(1),                             // 1h panes
                 Extractor.json("$.region"),            // window key
                 WindowAggregation.sum(Extractor.json("$.total")),
                 WindowTime.EVENT,                      // EVENT or INGEST clock
-                300_000_000_000L,                      // maxLateNs: 5min ingest bound
-                86_400_000_000_000L,                   // expireNs: keep panes 24h
+                Time.m(5),                             // maxLate: 5min ingest bound
+                Time.d(1),                             // expire: keep panes 24h
                 10_000L,                               // keyLimit
                 null),                                 // byteLimit
         "ops.hourly.emits"));              // emit feed (optional)
 ```
 
+Every duration a pipe declares is a `Time` — `Time.h`, `Time.m`,
+`Time.s`, `Time.ms`, `Time.us`, `Time.d`, `Time.ns` (or
+`Time.of(Duration)`). The SDK extracts nanoseconds internally for the
+wire; callers never spell raw nanosecond counts.
+
 ### Lateness models — pick exactly one
 
 `PipeOperation.window` has two mutually exclusive lateness models:
 
-- **`maxLateNs`** — ingest-clock bound. Events arriving more than
-  `maxLateNs` behind quarantine into a countable `late` row.
-- **`watermarkNs`** — event-time horizon `max(event_time) - watermarkNs`
+- **`maxLate`** — ingest-clock bound. Events arriving more than
+  `maxLate` behind quarantine into a countable `late` row.
+- **`watermark`** — event-time horizon `max(event_time) - watermark`
   closes a pane once it passes the pane end. Refused under
-  `WindowTime.INGEST`. Combine with `graceNs` to let late events *revise*
+  `WindowTime.INGEST`. Combine with `grace` to let late events *revise*
   an emitted pane (re-emits under a bumped revision) before counting into
   `late`.
 
 ```java
 // watermark + grace
-PipeOperation.window(60_000_000_000L, Extractor.recordKey(),
+PipeOperation.window(Time.m(1), Extractor.recordKey(),
         WindowAggregation.count(),
         WindowTime.EVENT,
-        null,              // maxLateNs stays null — watermark model instead
-        30_000_000_000L,   // watermarkNs: close a minute 30s after its end
-        15_000_000_000L,   // graceNs: revise emitted panes up to 15s late
+        null,              // maxLate stays null — watermark model instead
+        Time.s(30),        // watermark: close a minute 30s after its end
+        Time.s(15),        // grace: revise emitted panes up to 15s late
         null, null, null)
 ```
 
-Convenience overloads: `window(ns, key, agg)`, `window(ns, key, agg,
-watermarkNs)`, `window(ns, key, agg, watermarkNs, graceNs)`.
+Convenience overloads: `window(time, key, agg)`, `window(time, key, agg,
+watermark)`, `window(time, key, agg, watermark, grace)`.
 
 ### Aggregations
 
@@ -172,7 +177,7 @@ WindowAggregation.sum(Extractor.json("$.total"))   // sums the extracted value
 WindowAggregation.average(Extractor.json("$.rtt")) // running mean
 ```
 
-`expireNs` bounds pane retention once a pane provably closes;
+`expire` bounds pane retention once a pane provably closes;
 `keyLimit`/`byteLimit` bound store growth.
 
 ## 5. Lifecycle

@@ -17,6 +17,7 @@ import dev.whitewater.model.PipeOperation;
 import dev.whitewater.model.ReaderStart;
 import dev.whitewater.model.ResourceKind;
 import dev.whitewater.model.ShowKind;
+import dev.whitewater.model.Time;
 import dev.whitewater.model.WindowAggregation;
 import dev.whitewater.model.WindowTime;
 import org.junit.jupiter.api.Test;
@@ -77,7 +78,7 @@ class CommandsTest {
     @Test
     void subscriptionWithPolicyAndDelay() {
         var command = first(Commands.of().createSubscription(
-                "audit", "orders.events", null, ReaderStart.now(), 5_000_000_000L,
+                "audit", "orders.events", null, ReaderStart.now(), Time.s(5),
                 ExhaustedPolicy.attempts(5, ExhaustedDisposition.SKIP)));
         assertEquals("create_subscription", command.path("command").asText());
         assertEquals(5_000_000_000L, command.path("delivery_delay_ns").asLong());
@@ -256,10 +257,10 @@ class CommandsTest {
     void windowPipeSerializesBoundsAndEmit() {
         var command = first(Commands.of().defineWindowPipe(
                 "hourly", "orders.audit", "orders.hourlyspend",
-                PipeOperation.window(3_600_000_000_000L,
+                PipeOperation.window(Time.h(1),
                         Extractor.recordKey(),
                         WindowAggregation.sum(Extractor.json("total")),
-                        WindowTime.INGEST, 60_000_000_000L, 86_400_000_000_000L,
+                        WindowTime.INGEST, Time.m(1), Time.d(1),
                         10_000L, 4_000_000L),
                 "orders.hourlyfeed"));
         assertEquals("define_pipe", command.path("command").asText());
@@ -281,12 +282,12 @@ class CommandsTest {
     void windowPipeSerializesWatermarkAndGrace() {
         var command = first(Commands.of().defineWindowPipe(
                 "hourly.wm", "orders.audit", "orders.hourlyspend",
-                PipeOperation.window(3_600_000_000_000L,
+                PipeOperation.window(Time.h(1),
                         Extractor.recordKey(),
                         WindowAggregation.count(),
                         WindowTime.EVENT, null,
-                        300_000_000_000L, 30_000_000_000L,
-                        7_200_000_000_000L, null, null),
+                        Time.m(5), Time.s(30),
+                        Time.h(2), null, null),
                 "orders.hourlyfeed"));
         assertEquals("define_pipe", command.path("command").asText());
         assertEquals("orders.hourlyfeed", command.path("emit_feed").asText());
@@ -302,9 +303,9 @@ class CommandsTest {
 
     @Test
     void windowWatermarkConvenienceEmitsHorizonAndGrace() {
-        var op = PipeOperation.window(3_600_000_000_000L,
+        var op = PipeOperation.window(Time.h(1),
                         Extractor.recordKey(), WindowAggregation.count(),
-                        300_000_000_000L, 30_000_000_000L)
+                        Time.m(5), Time.s(30))
                 .toWire();
         assertEquals("window", op.path("operation").asText());
         assertEquals("event", op.path("time").asText());
@@ -313,9 +314,9 @@ class CommandsTest {
         assertFalse(op.hasNonNull("max_late_ns"));
         assertFalse(op.hasNonNull("expire_ns"));
 
-        var horizonOnly = PipeOperation.window(3_600_000_000_000L,
+        var horizonOnly = PipeOperation.window(Time.h(1),
                         Extractor.recordKey(), WindowAggregation.count(),
-                        300_000_000_000L)
+                        Time.m(5))
                 .toWire();
         assertEquals(300_000_000_000L, horizonOnly.path("watermark_ns").asLong());
         assertFalse(horizonOnly.hasNonNull("grace_ns"));
@@ -325,23 +326,59 @@ class CommandsTest {
     void windowLatenessModelValidation() {
         // GRACE requires WATERMARK — revision bounds ride the horizon.
         assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
-                3_600_000_000_000L, Extractor.recordKey(), WindowAggregation.count(),
-                WindowTime.EVENT, null, null, 30_000_000_000L, null, null, null));
+                Time.h(1), Extractor.recordKey(), WindowAggregation.count(),
+                WindowTime.EVENT, null, null, Time.s(30), null, null, null));
         // GRACE under MAX_LATE is still a missing watermark.
         assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
-                3_600_000_000_000L, Extractor.recordKey(), WindowAggregation.count(),
-                WindowTime.EVENT, 60_000_000_000L, null, 30_000_000_000L, null, null, null));
+                Time.h(1), Extractor.recordKey(), WindowAggregation.count(),
+                WindowTime.EVENT, Time.m(1), null, Time.s(30), null, null, null));
         // MAX_LATE and WATERMARK are alternative lateness models.
         assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
-                3_600_000_000_000L, Extractor.recordKey(), WindowAggregation.count(),
-                WindowTime.EVENT, 60_000_000_000L, 300_000_000_000L, null, null, null, null));
+                Time.h(1), Extractor.recordKey(), WindowAggregation.count(),
+                WindowTime.EVENT, Time.m(1), Time.m(5), null, null, null, null));
         // WATERMARK follows the event clock only.
         assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
-                3_600_000_000_000L, Extractor.recordKey(), WindowAggregation.count(),
-                WindowTime.INGEST, null, 300_000_000_000L, null, null, null, null));
+                Time.h(1), Extractor.recordKey(), WindowAggregation.count(),
+                WindowTime.INGEST, null, Time.m(5), null, null, null, null));
         // The watermark convenience routes through the same checks.
         assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
-                0L, Extractor.recordKey(), WindowAggregation.count(), 1L));
+                Time.s(0), Extractor.recordKey(), WindowAggregation.count(), Time.s(1)));
+        // A non-positive window is refused whichever form spells it.
+        assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
+                Time.ns(0), Extractor.recordKey(), WindowAggregation.count()));
+        assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
+                Time.m(-1), Extractor.recordKey(), WindowAggregation.count()));
+        // Optional bounds must be positive when declared.
+        assertThrows(IllegalArgumentException.class, () -> PipeOperation.window(
+                Time.h(1), Extractor.recordKey(), WindowAggregation.count(), Time.s(-1)));
+    }
+
+    @Test
+    void timeUnitsExtractExactNanoseconds() {
+        assertEquals(1L, Time.ns(1).nanos());
+        assertEquals(1_000L, Time.us(1).nanos());
+        assertEquals(1_000_000L, Time.ms(1).nanos());
+        assertEquals(1_000_000_000L, Time.s(1).nanos());
+        assertEquals(60_000_000_000L, Time.m(1).nanos());
+        assertEquals(3_600_000_000_000L, Time.h(1).nanos());
+        assertEquals(86_400_000_000_000L, Time.d(1).nanos());
+        assertEquals(Time.m(5).nanos(), Time.s(300).nanos());
+        assertEquals(Time.m(5), Time.s(300));
+        assertEquals(java.time.Duration.ofMinutes(5), Time.m(5).duration());
+        assertEquals(Time.m(5), Time.of(java.time.Duration.ofMinutes(5)));
+        // The exact ns the wire carries stays reachable for assertions.
+        var op = PipeOperation.window(Time.h(1), Extractor.recordKey(),
+                WindowAggregation.count(), WindowTime.EVENT, null,
+                Time.m(5), Time.s(30), Time.h(2), null, null).toWire();
+        assertEquals(3_600_000_000_000L, op.path("window_ns").asLong());
+        assertEquals(300_000_000_000L, op.path("watermark_ns").asLong());
+        assertEquals(30_000_000_000L, op.path("grace_ns").asLong());
+        assertEquals(7_200_000_000_000L, op.path("expire_ns").asLong());
+        // Unit multiplication overflows refuse instead of wrapping.
+        assertThrows(IllegalArgumentException.class, () -> Time.d(Long.MAX_VALUE));
+        assertThrows(IllegalArgumentException.class, () -> Time.h(Long.MAX_VALUE));
+        assertThrows(IllegalArgumentException.class,
+                () -> Time.of(java.time.Duration.ofSeconds(Long.MAX_VALUE)));
     }
 
     @Test

@@ -3,6 +3,7 @@ import dev.whitewater.admin.Commands;
 import dev.whitewater.model.Extractor;
 import dev.whitewater.model.NamedKey;
 import dev.whitewater.model.PipeOperation;
+import dev.whitewater.model.Time;
 import dev.whitewater.model.WindowAggregation;
 import dev.whitewater.model.WindowTime;
 
@@ -43,9 +44,6 @@ import java.util.List;
  * localhost defaults, like the other examples.
  */
 public class WindowPipes {
-
-    static final long MINUTE_NS = 60_000_000_000L;
-    static final long HOUR_NS = 60 * MINUTE_NS;
 
     static List<URI> endpoints() {
         String raw = System.getenv("WHITEWATER_ENDPOINTS");
@@ -92,14 +90,14 @@ public class WindowPipes {
                         "accounts.flow",
                         "accounts.panes",
                         PipeOperation.window(
-                                HOUR_NS,                        // WINDOW 1h panes
+                                Time.h(1),                       // WINDOW 1h panes
                                 Extractor.recordKey(),           // BY KEY — group on the record Key
                                 WindowAggregation.count(),       // COUNT per (Key, pane)
                                 WindowTime.EVENT,
                                 null,                            // no MAX_LATE — one lateness model only
-                                5 * MINUTE_NS,                   // WATERMARK: horizon = max(event) - 5m
-                                30_000_000_000L,                 // GRACE 30s: emitted panes revise + re-emit
-                                2 * HOUR_NS,                     // EXPIRE 2h: pane retention bound
+                                Time.m(5),                       // WATERMARK: horizon = max(event) - 5m
+                                Time.s(30),                      // GRACE 30s: emitted panes revise + re-emit
+                                Time.h(2),                       // EXPIRE 2h: pane retention bound
                                 null, null),
                         "accounts.results")                        // EMIT TO FEED
                 // A plain copy Pipe on its own Subscription, for the
