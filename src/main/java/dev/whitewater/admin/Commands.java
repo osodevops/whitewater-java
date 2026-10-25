@@ -450,7 +450,7 @@ public final class Commands {
     public Commands defineForwardPipe(String name, String subscription, String outputFeed) {
         return add(node("define_pipe")
                 .put("name", resource(name))
-                .put("subscription", subscription)
+                .put("subscription", resource(subscription))
                 .put("output_feed", dotted(outputFeed))
                 .set("operation", PipeOperation.forward().toWire()));
     }
@@ -472,7 +472,7 @@ public final class Commands {
         }
         ObjectNode node = node("define_pipe")
                 .put("name", resource(name))
-                .put("subscription", subscription)
+                .put("subscription", resource(subscription))
                 .put("output_feed", dotted(outputFeed))
                 .put("output_store", dotted(store));
         putIf(node, "quarantine_feed", quarantineFeed == null ? null : dotted(quarantineFeed));
@@ -497,7 +497,7 @@ public final class Commands {
         }
         ObjectNode node = node("define_pipe")
                 .put("name", resource(name))
-                .put("subscription", subscription)
+                .put("subscription", resource(subscription))
                 .put("output_store", dotted(outputStore));
         putIf(node, "emit_feed", emitFeed == null ? null : dotted(emitFeed));
         node.set("operation", operation.toWire());

@@ -28,9 +28,9 @@ public class MemberWork {
 
         client.createDomain("demo");
         client.createFeed("demo.work");
-        client.createSubscription("demo-audit", "demo.work", ReaderStart.beginning());
+        client.createSubscription("demo.audit", "demo.work", ReaderStart.beginning());
 
-        var member = client.member("demo-audit");
+        var member = client.member("demo.audit");
 
         var work = member.claim();
         try {
@@ -47,7 +47,7 @@ public class MemberWork {
         }
 
         // Transfer is for explicit handoff between live members.
-        var peer = client.member("demo-audit");
+        var peer = client.member("demo.audit");
         var pending = member.claim();
         member.transfer(pending, peer, 60);
         System.out.println("work handed to " + peer.memberId());

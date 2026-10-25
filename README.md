@@ -101,7 +101,9 @@ fallback → enriched feed or DLQ → counters — is in
 [examples/EnrichUsers.java](examples/EnrichUsers.java).
 
 The store lives on the Nodes — the SDK holds no local copy. See
-[docs/stores.md](docs/stores.md) for the full store guide.
+[docs/stores.md](docs/stores.md) for the full store guide and
+[docs/pipes.md](docs/pipes.md) for managed stream jobs
+(forward/enrich/window) built on subscriptions and stores.
 
 Errors surface as `WhitewaterException` subtypes mapped from wire `code`
 values (`stale_epoch`, `lease.busy`, `lease.stale_lease`,

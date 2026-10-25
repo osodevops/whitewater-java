@@ -108,6 +108,9 @@ class CommandsTest {
                 () -> Commands.of().pausePipe("audit_relay"));
         assertThrows(IllegalArgumentException.class,
                 () -> Commands.of().createRole("ROLE_admin"));
+        assertThrows(IllegalArgumentException.class,
+                () -> Commands.of().defineForwardPipe(
+                        "orders.relay", "orders-sub", "orders.archive"));
         // Dotted multi-segment spellings are valid on every kind.
         var batch = Commands.of()
                 .createWriter("orders.ingest", "orders.events")
@@ -231,6 +234,22 @@ class CommandsTest {
         assertEquals("strict", op.path("freshness").asText());
         assertEquals("by-id", op.path("named").asText());
         assertEquals("quarantine", op.path("on_miss").asText());
+    }
+
+    @Test
+    void enrichPipeSerializesDropMiss() {
+        var command = first(Commands.of().defineEnrichPipe(
+                "enrich", "orders.audit", "orders.enriched", "orders.customers",
+                PipeOperation.enrich(
+                        Extractor.metadata("customer_id"),
+                        EnrichFreshness.STRICT,
+                        "by-id",
+                        EnrichMiss.DROP),
+                null));
+        var op = command.path("operation");
+        assertEquals("drop", op.path("on_miss").asText());
+        assertTrue(command.path("quarantine_feed").isMissingNode()
+                || command.path("quarantine_feed").isNull());
     }
 
     @Test

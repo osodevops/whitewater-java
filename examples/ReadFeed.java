@@ -47,7 +47,7 @@ public class ReadFeed {
         // opens the session, and owns the fence. Another client opening
         // the same Reader supersedes this session (stale_epoch on the
         // next fetch).
-        try (FeedReader<String, Order> reader = orders.reader("demo-reader", 64)) {
+        try (FeedReader<String, Order> reader = orders.reader("demo.reader", 64)) {
             while (true) {
                 // fetch() returns immediately with whatever is committed —
                 // a Reader is not a long-poll. For "sit and wait" behavior,

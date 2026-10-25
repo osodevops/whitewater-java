@@ -39,7 +39,7 @@ public class WriteFeed {
 
         // Session-bound handle: declares the Writer if missing, opens
         // OPEN WRITER SESSION internally, and owns the fencing epoch.
-        FeedWriter<String, Order> writer = orders.writer("orders-writer");
+        FeedWriter<String, Order> writer = orders.writer("orders.writer.sess");
 
         // simplest form: auto request identity, ingest-clock event time.
         var first = writer.append("order-1", new Order("order-1", 42));

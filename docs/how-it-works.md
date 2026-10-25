@@ -78,8 +78,8 @@ Raw script — several statements commit as one request (pass a shared
 client.wcl("""
     CREATE DOMAIN shop;
     CREATE FEED shop.orders;
-    CREATE WRITER orders-writer TO shop.orders;
-    OPEN WRITER SESSION orders-writer;
+    CREATE WRITER orders.writer TO shop.orders;
+    OPEN WRITER SESSION orders.writer;
     CREATE READER audit FROM shop.orders START AT BEGINNING;
     SHOW FEEDS;
     """);
@@ -91,8 +91,8 @@ statement and calls `wcl` internally:
 ```java
 client.createDomain("shop");                         // CREATE DOMAIN shop;
 client.createFeed("shop.orders");                    // CREATE FEED shop.orders;
-client.createWriter("orders-writer", "shop.orders");
-client.openWriterSession("orders-writer");           // epoch in .data()
+client.createWriter("orders.writer", "shop.orders");
+client.openWriterSession("orders.writer");           // epoch in .data()
 client.createReader("audit", "shop.orders", ReaderStart.beginning());
 client.listFeeds();                                  // SHOW FEEDS;
 client.seekReader("audit", ReaderStart.now());       // SEEK READER ... TO NOW;
@@ -113,7 +113,7 @@ client.commands(Commands.of()
                 new NamedKey("passport", true),
                 new NamedKey("department", false)))
         .grant(Set.of(Permission.READ, Permission.WRITE),
-                "accounts.employees", "hr-app"));
+                "accounts.employees", "hr.app"));
 ```
 
 `dev.whitewater.admin.Commands` covers the public-safe command

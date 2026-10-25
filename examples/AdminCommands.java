@@ -45,7 +45,7 @@ public class AdminCommands {
                 .createFeed("orders.events")
                 .createWriter("ingest", "orders.events")
                 .createReader("audit", "orders.events", ReaderStart.beginning())
-                .createSubscription("audit-sub", "orders.events")
+                .createSubscription("audit.sub", "orders.events")
                 .createRole("auditor")
                 .grant(Set.of(Permission.READ), "orders.events", "auditor")
                 .defineIndex("orders.events.bystatus", "orders.events",
@@ -65,7 +65,7 @@ public class AdminCommands {
                 + " rows, behind=" + page.behind());
 
         // operator surfaces
-        var state = client.subscriptionMemberState("audit-sub");
+        var state = client.subscriptionMemberState("audit.sub");
         System.out.println("subscription epoch " + state.ownershipEpoch()
                 + ", members " + state.memberEpochs());
     }
