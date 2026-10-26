@@ -3,6 +3,7 @@ package dev.whitewater;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.internal.Wire;
+import dev.whitewater.admin.Commands;
 import dev.whitewater.model.ControlExecution;
 import dev.whitewater.model.FeedRecord;
 import dev.whitewater.model.ReaderStart;
@@ -160,6 +161,26 @@ public final class WhitewaterClient implements AutoCloseable {
     /** {@code CREATE FEED <dotted.name>} */
     public ControlExecution createFeed(String name) {
         return wcl("CREATE FEED " + dotted(name));
+    }
+
+    /** {@code SET SCHEMA ON DOMAIN <name>} — the Domain's inherited default. */
+    public ControlExecution setDomainSchema(String domain, dev.whitewater.model.FeedSchema schema) {
+        return commands(Commands.of().setDomainSchema(domain, schema));
+    }
+
+    /** {@code SET SCHEMA ON FEED <feed>} — overrides the named sides. */
+    public ControlExecution setFeedSchema(String feed, dev.whitewater.model.FeedSchema schema) {
+        return commands(Commands.of().setFeedSchema(feed, schema));
+    }
+
+    /** {@code DROP SCHEMA ON DOMAIN <name>} — clears the declared default. */
+    public ControlExecution clearDomainSchema(String domain) {
+        return commands(Commands.of().clearDomainSchema(domain));
+    }
+
+    /** {@code DROP SCHEMA ON FEED <feed>} — reverts to Domain inheritance. */
+    public ControlExecution clearFeedSchema(String feed) {
+        return commands(Commands.of().clearFeedSchema(feed));
     }
 
     /** {@code CREATE WRITER <name> TO <feed>} */

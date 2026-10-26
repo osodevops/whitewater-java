@@ -85,6 +85,7 @@ public final class FakeRiverbed implements AutoCloseable {
     private final Map<String, Rec> byCursor = new HashMap<>();
     // Domain name -> space_id (CREATE DOMAIN registers; feeds scope by prefix).
     private final Map<String, String> domainIds = new LinkedHashMap<>();
+    private final Map<String, ObjectNode> schemas = new HashMap<>();
     private final Map<String, String> writerFeed = new HashMap<>();
     private final Map<String, WriterSession> writers = new HashMap<>();
     private final Map<String, Reader> readers = new HashMap<>();
@@ -559,6 +560,33 @@ public final class FakeRiverbed implements AutoCloseable {
             if (r != null) {
                 r.acked = r.delivered = startIndex(stmt.substring(stmt.indexOf(" TO ") + 4), r.feed);
             }
+        } else if (tok.length >= 6 && eq(tok, 0, "SET") && eq(tok, 1, "SCHEMA")
+                && eq(tok, 2, "ON")) {
+            // SET SCHEMA ON DOMAIN|FEED <name> (KEY|VALUE <fmt> [SUBJECT 's'] [DEFINITION 'd'])+
+            var scopeKey = (eq(tok, 3, "FEED") ? "feed:" : "domain:") + tok[4];
+            ObjectNode schema = schemas.containsKey(scopeKey)
+                    ? (ObjectNode) schemas.get(scopeKey).deepCopy() : obj();
+            for (int i = 5; i < tok.length; i++) {
+                if (!eq(tok, i, "KEY") && !eq(tok, i, "VALUE") || i + 1 >= tok.length) {
+                    break;
+                }
+                var side = tok[i].toLowerCase();
+                ObjectNode decl = obj().put("format", tok[i + 1].toLowerCase());
+                i += 2;
+                while (i < tok.length && (eq(tok, i, "SUBJECT") || eq(tok, i, "DEFINITION"))) {
+                    var field = tok[i].toLowerCase();
+                    var value = ++i < tok.length ? tok[i] : "";
+                    decl.put(field, value.replaceAll("^'|'$", "").replace("''", "'"));
+                    i++;
+                }
+                schema.set(side, decl);
+                i--;
+            }
+            schemas.put(scopeKey, schema);
+        } else if (tok.length >= 5 && eq(tok, 0, "DROP") && eq(tok, 1, "SCHEMA")
+                && eq(tok, 2, "ON")) {
+            // DROP SCHEMA ON DOMAIN|FEED <name>
+            schemas.remove((eq(tok, 3, "FEED") ? "feed:" : "domain:") + tok[4]);
         } else if (tok.length >= 3 && eq(tok, 0, "DROP")) {
             switch (tok[1]) {
                 case "WRITER" -> {
@@ -589,6 +617,7 @@ public final class FakeRiverbed implements AutoCloseable {
                 row.put("space_id", id).put("name", name)
                         .put("status", "active").put("created_at_ns", 0);
                 row.putNull("history_policy");
+                row.set("schema", schemaOrNull("domain:" + name));
             }
             case "FEED" -> {
                 if (!feeds.containsKey(name)) {
@@ -603,6 +632,8 @@ public final class FakeRiverbed implements AutoCloseable {
                     row.put("space_id", space);
                 }
                 row.put("storage_name", name).put("status", "active").put("created_at_ns", 0);
+                row.set("schema", schemaOrNull("feed:" + name));
+                row.set("effective_schema", effectiveSchema(name));
             }
             default -> row.put("error", "unsupported DESCRIBE " + kind);
         }
@@ -631,6 +662,8 @@ public final class FakeRiverbed implements AutoCloseable {
                     } else {
                         row.put("space_id", space);
                     }
+                    row.set("schema", schemaOrNull("feed:" + feed));
+                    row.set("effective_schema", effectiveSchema(feed));
                     rows.add(row);
                 }
             }
@@ -675,6 +708,15 @@ public final class FakeRiverbed implements AutoCloseable {
                         row.put("space_id", space);
                     }
                     rows.add(row);
+                }
+            }
+            case "schemas" -> {
+                for (var entry : schemas.entrySet()) {
+                    var colon = entry.getKey().indexOf(':');
+                    rows.add(obj()
+                            .put("scope_kind", entry.getKey().substring(0, colon))
+                            .put("name", entry.getKey().substring(colon + 1))
+                            .set("schema", entry.getValue()));
                 }
             }
             case "statestores" -> {
@@ -751,6 +793,15 @@ public final class FakeRiverbed implements AutoCloseable {
                     feeds.computeIfAbsent(r.feed, f -> new ArrayList<>());
                     r.acked = r.delivered = startIndex(command.path("start"), r.feed);
                 }
+            }
+            case "set_schema" -> {
+                var scope = command.path("scope");
+                var scopeKey = scope.path("kind").asText() + ":" + scope.path("name").asText();
+                schemas.put(scopeKey, (ObjectNode) command.path("schema").deepCopy());
+            }
+            case "clear_schema" -> {
+                var scope = command.path("scope");
+                schemas.remove(scope.path("kind").asText() + ":" + scope.path("name").asText());
             }
             case "create_subscription" -> {
                 Sub s = subscriptions.computeIfAbsent(command.path("name").asText(), n -> new Sub());
@@ -1189,6 +1240,27 @@ public final class FakeRiverbed implements AutoCloseable {
             }
         }
         return best;
+    }
+
+    /** The declared schema row for a scope key, or null. */
+    private JsonNode schemaOrNull(String scopeKey) {
+        return schemas.getOrDefault(scopeKey, null);
+    }
+
+    /** The feed's declared schema layered over its Domain's — null when undeclared. */
+    private JsonNode effectiveSchema(String feedName) {
+        var own = schemas.get("feed:" + feedName);
+        var domain = owningDomain(feedName);
+        var inherited = domain == null ? null : schemas.get("domain:" + domain);
+        if (own == null) {
+            return inherited;
+        }
+        if (inherited == null) {
+            return own;
+        }
+        var merged = (ObjectNode) inherited.deepCopy();
+        merged.setAll(own);
+        return merged;
     }
 
     /** space_id of the Domain owning {@code resourceName}, or null when undeclared. */

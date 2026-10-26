@@ -108,6 +108,32 @@ first catalog accessor loads the whole Domain view in one batched
 control read and `refresh()` re-pulls it. `client.domain(name)` is the
 lazy variant for code paths that only compose names.
 
+### Record schemas
+
+Records stay schema-neutral bytes on the wire — but a Feed *can* declare
+schema metadata the catalog tracks for tooling, validation, and
+compatibility. The Domain's schema is the default every Feed inherits;
+a Feed's own declaration overrides the named sides:
+
+```java
+client.setDomainSchema("shop",
+        FeedSchema.value(SchemaDecl.of("json", "order-v1")));
+client.setFeedSchema("shop.orders",
+        FeedSchema.key(SchemaDecl.of("text")));
+
+shop.feedSchema("orders");          // effective: key=text, value=json/order-v1
+shop.declaredFeedSchema("orders");  // the Feed's own sides only
+shop.schema();                      // the Domain default
+client.clearFeedSchema("shop.orders");   // reverts to inheritance
+```
+
+`SET SCHEMA ON DOMAIN|FEED <name> (KEY|VALUE <format> [SUBJECT 'x']
+[DEFINITION 'y'])+` in WCL does the same; `SHOW SCHEMAS` lists declared
+assignments and `DESCRIBE FEED` shows `schema` + `effective_schema`.
+Formats today: `text`, `json`, `protobuf`, `avro`, `custom.<name>` —
+compatibility enforcement is still a no-op, so treat declarations as
+documentation/tooling metadata until the registry contract lands.
+
 ## Permanent consumers — the Kafka loop, minus the plumbing
 
 `feed.consumer(name)` is the durable-Reader equivalent of

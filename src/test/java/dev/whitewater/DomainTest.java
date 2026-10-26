@@ -183,6 +183,67 @@ class DomainTest {
     }
 
     @Test
+    void feedSchemaLayersTheFeedOverrideOverTheDomainDefault() {
+        shopCatalog();
+        client.setDomainSchema("shop",
+                dev.whitewater.model.FeedSchema.value(
+                        dev.whitewater.model.SchemaDecl.of("json", "order-v1")));
+        client.setFeedSchema("shop.orders",
+                dev.whitewater.model.FeedSchema.key(
+                        dev.whitewater.model.SchemaDecl.of("text")));
+
+        var shop = client.getDomain("shop");
+        assertEquals("json", shop.schema().value().format());
+        assertEquals("order-v1", shop.schema().value().subject());
+
+        // Effective: key from the Feed override, value inherited.
+        var effective = shop.feedSchema("orders");
+        assertEquals("text", effective.key().format());
+        assertEquals("json", effective.value().format());
+        // Declared: only the Feed's own sides.
+        var declared = shop.declaredFeedSchema("orders");
+        assertEquals("text", declared.key().format());
+        assertNull(declared.value());
+        // Undeclared on the Feed -> inherits the Domain default.
+        assertEquals("json", shop.feedSchema("returns").value().format());
+        assertNull(shop.declaredFeedSchema("returns"));
+    }
+
+    @Test
+    void dropSchemaRevertsToDomainInheritance() {
+        shopCatalog();
+        client.setDomainSchema("shop",
+                dev.whitewater.model.FeedSchema.value(
+                        dev.whitewater.model.SchemaDecl.of("json")));
+        client.setFeedSchema("shop.orders",
+                dev.whitewater.model.FeedSchema.value(
+                        dev.whitewater.model.SchemaDecl.of("avro")));
+
+        var shop = client.getDomain("shop");
+        assertEquals("avro", shop.feedSchema("orders").value().format());
+
+        client.clearFeedSchema("shop.orders");
+        shop.refresh();
+        assertEquals("json", shop.feedSchema("orders").value().format());
+        assertNull(shop.declaredFeedSchema("orders"));
+    }
+
+    @Test
+    void describeFeedCarriesDeclaredAndEffectiveSchema() {
+        shopCatalog();
+        client.setFeedSchema("shop.orders",
+                dev.whitewater.model.FeedSchema.value(
+                        dev.whitewater.model.SchemaDecl.custom("msgpack")));
+        var described = client.commands(
+                dev.whitewater.admin.Commands.of()
+                        .describe(dev.whitewater.model.ResourceKind.FEED, "shop.orders"));
+        var row = described.results().get(0).data();
+        assertEquals("custom.msgpack", row.path("schema").path("value").path("format").asText());
+        assertEquals("custom.msgpack",
+                row.path("effective_schema").path("value").path("format").asText());
+    }
+
+    @Test
     void readerStartTimestampAcceptsAnInstant() {
         var start = ReaderStart.timestamp(Instant.ofEpochSecond(1_700_000_000L, 500));
         assertEquals(1_700_000_000_000_000_500L, start.timestampNs());

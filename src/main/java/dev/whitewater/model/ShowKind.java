@@ -12,6 +12,8 @@ public enum ShowKind {
     GRANTS,
     API_KEYS,
     STORAGE_NODES,
+    HISTORY_POLICIES,
+    SCHEMAS,
     PIPES,
     INDEXES,
     STATE_STORES;

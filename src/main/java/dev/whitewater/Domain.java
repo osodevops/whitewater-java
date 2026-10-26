@@ -5,6 +5,7 @@ import dev.whitewater.admin.Commands;
 import dev.whitewater.model.Codec;
 import dev.whitewater.model.Codecs;
 import dev.whitewater.model.ControlExecution;
+import dev.whitewater.model.FeedSchema;
 import dev.whitewater.model.ResourceKind;
 import dev.whitewater.model.ShowKind;
 
@@ -70,6 +71,15 @@ public final class Domain {
         return policy.isMissingNode() || policy.isNull() ? null : policy;
     }
 
+    /**
+     * The declared record schema default for this Domain — the
+     * {@code SET SCHEMA ON DOMAIN} row, or null when undeclared. Feed
+     * overrides layer over this via {@link #feedSchema(String)}.
+     */
+    public FeedSchema schema() {
+        return FeedSchema.fromWire(snapshot().describe.path("schema"));
+    }
+
     // ---- scoped resources ----------------------------------------------------
 
     /**
@@ -100,6 +110,25 @@ public final class Domain {
     /** The Feed names in this Domain, sorted — the plain-string view of {@link #feeds()}. */
     public List<String> feedNames() {
         return snapshot().feeds;
+    }
+
+    /**
+     * The effective record schema a Feed in this Domain carries — its
+     * declared override layered over the Domain's — or null when
+     * nothing is declared (schema-agnostic bytes). Materializes the
+     * snapshot; the name resolves like {@link #feed(String)}.
+     */
+    public FeedSchema feedSchema(String relative) {
+        return snapshot().effectiveSchemas.get(resolve(relative));
+    }
+
+    /**
+     * The schema declared directly on the Feed, without Domain
+     * inheritance — null when the Feed has no {@code SET SCHEMA}
+     * override of its own.
+     */
+    public FeedSchema declaredFeedSchema(String relative) {
+        return snapshot().declaredSchemas.get(resolve(relative));
     }
 
     /** Names of declared Readers on this Domain's Feeds, sorted. */
@@ -246,10 +275,21 @@ public final class Domain {
 
         var feeds = new ArrayList<String>();
         var feedIds = new java.util.HashSet<UUID>();
+        var effectiveSchemas = new java.util.HashMap<String, FeedSchema>();
+        var declaredSchemas = new java.util.HashMap<String, FeedSchema>();
         for (var row : results.get(1).data()) {
             if (domainId(row.path("space_id"), domainId)) {
-                feeds.add(row.path("name").asText());
+                var feedName = row.path("name").asText();
+                feeds.add(feedName);
                 feedIds.add(UUID.fromString(row.path("feed_id").asText()));
+                var effective = FeedSchema.fromWire(row.path("effective_schema"));
+                if (effective != null) {
+                    effectiveSchemas.put(feedName, effective);
+                }
+                var declared = FeedSchema.fromWire(row.path("schema"));
+                if (declared != null) {
+                    declaredSchemas.put(feedName, declared);
+                }
             }
         }
         var readers = scopedNames(results.get(2).data(), "feed_id", feedIds);
@@ -260,7 +300,8 @@ public final class Domain {
         var stores = scopedNames(results.get(7).data(), "space_id", java.util.Set.of(domainId));
         feeds.sort(null);
         return new Snapshot(domainId, describe, execution.revision(),
-                List.copyOf(feeds), readers, writers, subscriptions, pipes, indexes, stores);
+                List.copyOf(feeds), readers, writers, subscriptions, pipes, indexes, stores,
+                effectiveSchemas, declaredSchemas);
     }
 
     private static boolean domainId(JsonNode node, UUID expected) {
@@ -293,11 +334,15 @@ public final class Domain {
         final List<String> pipes;
         final List<String> indexes;
         final List<String> stateStores;
+        final java.util.Map<String, FeedSchema> effectiveSchemas;
+        final java.util.Map<String, FeedSchema> declaredSchemas;
 
         Snapshot(UUID domainId, JsonNode describe, long revision,
                 List<String> feeds, List<String> readers, List<String> writers,
                 List<String> subscriptions, List<String> pipes,
-                List<String> indexes, List<String> stateStores) {
+                List<String> indexes, List<String> stateStores,
+                java.util.Map<String, FeedSchema> effectiveSchemas,
+                java.util.Map<String, FeedSchema> declaredSchemas) {
             this.domainId = domainId;
             this.describe = describe;
             this.revision = revision;
@@ -308,6 +353,8 @@ public final class Domain {
             this.pipes = pipes;
             this.indexes = indexes;
             this.stateStores = stateStores;
+            this.effectiveSchemas = java.util.Map.copyOf(effectiveSchemas);
+            this.declaredSchemas = java.util.Map.copyOf(declaredSchemas);
         }
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.whitewater.internal.Transport;
+import dev.whitewater.model.FeedSchema;
 import dev.whitewater.model.ExhaustedPolicy;
 import dev.whitewater.model.Extractor;
 import dev.whitewater.model.GrantEffect;
@@ -356,6 +357,48 @@ public final class Commands {
      * projections over the source record ({@code key}, named Metadata,
      * versioned JSON-path projections).
      */
+        /**
+     * {@code SET SCHEMA ON DOMAIN <name>} — declares record schema
+     * metadata every Feed in the Domain inherits by default.
+     */
+    public Commands setDomainSchema(String domain, FeedSchema schema) {
+        ObjectNode cmd = (ObjectNode) node("set_schema");
+        cmd.set("scope", Transport.json().createObjectNode()
+                .put("kind", "domain").put("name", dotted(domain)));
+        cmd.set("schema",
+                java.util.Objects.requireNonNull(schema, "schema is required").toWire());
+        return add(cmd);
+    }
+
+    /**
+     * {@code SET SCHEMA ON FEED <feed>} — overrides the Domain's
+     * declared schema for the named sides only.
+     */
+    public Commands setFeedSchema(String feed, FeedSchema schema) {
+        ObjectNode cmd = (ObjectNode) node("set_schema");
+        cmd.set("scope", Transport.json().createObjectNode()
+                .put("kind", "feed").put("name", dotted(feed)));
+        cmd.set("schema",
+                java.util.Objects.requireNonNull(schema, "schema is required").toWire());
+        return add(cmd);
+    }
+
+    /** {@code DROP SCHEMA ON DOMAIN <name>} — clears the declared default. */
+    public Commands clearDomainSchema(String domain) {
+        ObjectNode cmd = (ObjectNode) node("clear_schema");
+        cmd.set("scope", Transport.json().createObjectNode()
+                .put("kind", "domain").put("name", dotted(domain)));
+        return add(cmd);
+    }
+
+    /** {@code DROP SCHEMA ON FEED <feed>} — reverts to Domain inheritance. */
+    public Commands clearFeedSchema(String feed) {
+        ObjectNode cmd = (ObjectNode) node("clear_schema");
+        cmd.set("scope", Transport.json().createObjectNode()
+                .put("kind", "feed").put("name", dotted(feed)));
+        return add(cmd);
+    }
+
     public Commands defineIndex(
             String name,
             String feed,
