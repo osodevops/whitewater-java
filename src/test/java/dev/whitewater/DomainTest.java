@@ -118,7 +118,7 @@ class DomainTest {
         try (var reader = client.createReader(shop, shop.getFeed("orders"))
                 .readerId("shop.fulfillment")
                 .readerStartPoint(Beginning)
-                .capacity(4)
+                .maxPageSize(4)
                 .open()) {
             var page = reader.fetch();
             assertEquals(1, page.records().size());
@@ -195,12 +195,12 @@ class DomainTest {
         writer.append("order-1", "1".getBytes());
         writer.append("order-2", "2".getBytes());
 
-        // capacity(1) → one record per page: page 1 delivers + acks,
+        // maxPageSize(1) → one record per page: page 1 delivers + acks,
         // the handler stops on page 2 before it is acked.
         var reader = shop.createReader("orders")
                 .readerId("shop.pump")
                 .readerStartPoint(Beginning)
-                .capacity(1)
+                .maxPageSize(1)
                 .open();
         var seen = new java.util.ArrayList<String>();
         reader.forEachWhile(m -> {
@@ -213,6 +213,53 @@ class DomainTest {
         // The unacked tail replays on the next open.
         try (var again = shop.createReader("orders").readerId("shop.pump").open()) {
             assertEquals("order-2", again.fetch().records().get(0).key());
+        }
+    }
+
+    @Test
+    void readerListenPumpsOnAnSdkOwnedThread() throws Exception {
+        shopCatalog();
+        var shop = client.getDomain("shop");
+        shop.createWriter("orders").writerId("shop.w3").open()
+                .append("order-1", "1".getBytes());
+
+        var reader = shop.createReader("orders")
+                .readerId("shop.listener")
+                .readerStartPoint(Beginning)
+                .open();
+        var seen = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        // No user-side Thread or executor — the SDK owns the pump.
+        var pump = reader.listen(m -> seen.add(m.key()));
+        for (int i = 0; i < 200 && seen.isEmpty(); i++) {
+            Thread.sleep(10);
+        }
+        assertEquals(List.of("order-1"), seen);
+        assertNull(pump.failure());
+        pump.close();                   // stops the thread + closes the session
+        assertFalse(pump.running());
+    }
+
+    @Test
+    void readerListenSurfacesAHandlerFailureAndReplays() throws Exception {
+        shopCatalog();
+        var shop = client.getDomain("shop");
+        shop.createWriter("orders").writerId("shop.w4").open()
+                .append("order-1", "1".getBytes());
+
+        var reader = shop.createReader("orders")
+                .readerId("shop.failing")
+                .readerStartPoint(Beginning)
+                .open();
+        var boom = new RuntimeException("boom");
+        var pump = reader.listen(m -> { throw boom; });
+        for (int i = 0; i < 200 && pump.running(); i++) {
+            Thread.sleep(10);
+        }
+        assertSame(boom, pump.failure());
+
+        // The failed page stayed unacked → it replays on the next open.
+        try (var again = shop.createReader("orders").readerId("shop.failing").open()) {
+            assertEquals("order-1", again.fetch().records().get(0).key());
         }
     }
 

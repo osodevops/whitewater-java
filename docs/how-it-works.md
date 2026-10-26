@@ -12,7 +12,7 @@ WhitewaterClient  ─┬─ wcl / commands / Commands.of()    → POST /v1/admin
                    ├─ feeds()   → FeedClient            → /v1/feeds/*, /v1/readers/temporary/fetch
                    ├─ writer(name)                      → session-bound Writer
                    ├─ writerSession(name, epoch)        → /v1/writers/append[-batch]
-                   ├─ reader(name, capacity)            → session-bound Reader
+                   ├─ reader(name, maxPageSize)            → session-bound Reader
                    ├─ readerSession(name)               → /v1/readers/open|fetch|ack|close
                    ├─ member(sub)                       → session-bound Member
                    ├─ subscriptionMember(name)          → /v1/subscriptions/members/*
@@ -176,7 +176,7 @@ import static dev.whitewater.model.ReaderStart.*;   // Beginning, End
 try (var reader = shop.createReader("orders")     // = client.createReader(shop, …)
         .readerId("fulfillment")         // durable consume identity — Kafka groupId
         .readerStartPoint(Beginning)     // first-time start — auto.offset.reset
-        .capacity(256)
+        .maxPageSize(256)
         .open()) {                        // FeedReader<String, byte[]>
     reader.forEach(m -> handle(m));      // per-record pump: deliver → ack each page
     // or stay manual: fetch() → handle → ack()
@@ -189,12 +189,14 @@ try (var reader = shop.createReader("orders")     // = client.createReader(shop,
   (oldest retained), `End` (new records only), `cursor(c)`, or
   `timestamp(Instant)` — the same mapping Kafka's
   `auto.offset.reset=earliest|latest` gives a fresh group.
-- `reader.forEach(handler)` pumps records one at a time and acks each
-  fetched page after its records are handled; `forEachWhile` stops on a
-  `false` return leaving the in-flight page unacked so its tail replays.
-  `close()` from another thread ends the pump; the loop paces empty
-  fetches on the server's `retry_after_ms`.
-- `capacity` bounds each `fetch` page (default 128).
+- `reader.listen(handler)` pumps on an SDK-owned daemon thread and
+  returns a `Pump` handle (`close()` stops the thread + session;
+  `failure()` surfaces a handler error) — no user-side `Thread` or
+  executor. `reader.forEach(handler)` is the blocking form;
+  `forEachWhile` stops on a `false` return leaving the in-flight page
+  unacked so its tail replays. The loop paces empty fetches on the
+  server's `retry_after_ms`.
+- `maxPageSize` bounds each `fetch` page (default 128).
 - `.declare()` creates the catalog row without opening a session —
   useful for provisioning ahead of consumers.
 - The same shape exists for producers:
@@ -216,7 +218,7 @@ Three shapes, in increasing durability:
    `wait_ms` elapses, returning `records` + `nextCursor`. Continue with
    `nextCursor`, never the last record's cursor — the page may be
    filtered or empty.
-3. **`client.reader(name, capacity)`** — durable independent cursor,
+3. **`client.reader(name, maxPageSize)`** — durable independent cursor,
    session-bound: opens internally, `fetch(limit)` tracks the delivered
    Cursor so `ack()` commits the right frontier, `close()` releases the
    fence. (The explicit-epoch form `readerSession(name)` +

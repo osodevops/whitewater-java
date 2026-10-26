@@ -25,16 +25,16 @@ WhitewaterClient client = WhitewaterClient.builder()
 | `client.commands(Commands.of()…)` | The typed-command vocabulary as a validated fluent builder — Domains, Feeds, Writers, Readers, Subscriptions (feed or Domain source, delivery delay, retry budget), Roles, grants/revocations, API keys, Indexes (`define_index`/`rebuild`/`get_index`), StateStores, Pipes (forward/enrich/window, pause/resume), storage-Node registration/drain/retire/capacity |
 | `ReaderStart` | Reader/Subscription start positions: `Beginning`, `End`, `beginning()`, `now()`, `cursor(c)`, `timestamp(instant)`, `timestampNs(ns)` — `import static dev.whitewater.model.ReaderStart.*` makes `Beginning`/`End` bare |
 | `client.writer(name)` | **Session-bound Writer**: opens `OPEN WRITER SESSION` internally; `append(key, payload)` auto request IDs + epoch, `reopen()` after `StaleSession` |
-| `client.reader(name, capacity)` | **Session-bound Reader**: opens internally; `fetch(limit)` tracks the delivered Cursor so `ack()` commits the right frontier; `close()` releases the fence |
+| `client.reader(name, maxPageSize)` | **Session-bound Reader**: opens internally; `fetch(limit)` tracks the delivered Cursor so `ack()` commits the right frontier; `close()` releases the fence |
 | `client.member(sub)` | **Session-bound member**: joins internally; `claim() → fetch → ack → release → transfer(work, peer)` with no epoch threading |
 | `client.subscriptionMember(sub)` | Raw member client: explicit `memberId`/`memberEpoch`/`leaseEpoch` plumbing (`join`, `claim`, `renew`, `release`, `transfer`, `fetch`, `ack`, `state()`) |
 | `client.seekSubscription(name, position, ts, cursor)` | Operator reposition of a Subscription's shared frontier — refused while a member work lease is active |
 | `client.subscriptionMemberState(name)` | Authoritative member state: ownership epoch, per-member epochs, live leases |
 | `client.queryIndex(name, predicate)` | `exact` / `prefix` / `range` reads against an activated Index generation, with applied-vs-target freshness evidence |
 | `client.domain(name)` / `client.getDomain(name)` | **Typed Domain facade**: `domain` is a lazy handle; `getDomain` verifies + materializes the Domain's catalog view in one batched read — `feeds()`/`feedNames()`, `readers()`, `writers()`, `subscriptions()`, `pipes()`, `indexes()`, `stateStores()`, `describe()`, `historyPolicy()`, `refresh()`. `domain.feed("orders")` resolves `shop.orders` with zero I/O |
-| `client.createReader(domain, feed)` | **Fluent durable Reader**: `.readerId("fulfillment")` (the Kafka groupId analogue) → `.readerStartPoint(Beginning)` → `.capacity(n)` → `.open()` returning a codec-bound `FeedReader<K,V>` |
+| `client.createReader(domain, feed)` | **Fluent durable Reader**: `.readerId("fulfillment")` (the Kafka groupId analogue) → `.readerStartPoint(Beginning)` → `.maxPageSize(n)` → `.open()` returning a codec-bound `FeedReader<K,V>` |
 | `client.createWriter(domain, feed)` | **Fluent durable Writer**: `.writerId("orders.ingest")` → `.open()` returning a codec-bound `FeedWriter<K,V>` |
-| `client.feed(name[, type/codec])` | **Typed feed facade**: binds `Codec`s once so keys/payloads serialize automatically in both directions — `feed.writer(name)` (declares + opens a session), `feed.reader(name, capacity)` (decoded `fetch`/`ack`), `feed.fetch`/`records`/`load` (decoded ad-hoc reads), `feed.subscribe` (decoded batches). Same codec vocabulary as `stateStore`: `String`/`byte[]`/`JsonNode`/Jackson classes out of the box, protobuf/Avro/custom via `dev.whitewater.codec`/`Codecs.of` |
+| `client.feed(name[, type/codec])` | **Typed feed facade**: binds `Codec`s once so keys/payloads serialize automatically in both directions — `feed.writer(name)` (declares + opens a session), `feed.reader(name, maxPageSize)` (decoded `fetch`/`ack`), `feed.fetch`/`records`/`load` (decoded ad-hoc reads), `feed.subscribe` (decoded batches). Same codec vocabulary as `stateStore`: `String`/`byte[]`/`JsonNode`/Jackson classes out of the box, protobuf/Avro/custom via `dev.whitewater.codec`/`Codecs.of` |
 | `client.feeds()` | Raw-byte ad-hoc Feed operations: committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends, `load(feed, start, sink)` one-shot history reads — the escape hatch under `client.feed(...)` |
 | `client.subscribe(reader, feed, start, onRecords)` | Managed durable consume: provisions the Reader, runs open → fetch → deliver → ack on a background thread; `Subscription.close()` to stop |
 | `client.stateStore(name[, type/codec])` / `client.stateStores()` | Typed server-side StateStore facade — durable RF3 rows on the Nodes, serialized by class (String/JSON) or bound `Codec`s (String keys + `byte[]` payloads by default): `put`/`get`/`getBy`/`iterate`/`delete`/`clear`/`drop`/`sync()`/`rebuild()`. Optional protobuf/Avro codecs in `dev.whitewater.codec` |
@@ -90,18 +90,16 @@ shop.readers(); shop.writers(); shop.subscriptions();
 var writer = shop.createWriter("orders")
         .writerId("ingest")
         .open();
-try (var reader = shop.createReader("orders")
+var reader = shop.createReader("orders")
         .readerId("fulfillment")                    // durable consume identity
         .readerStartPoint(Beginning)                // first-time start position
-        .capacity(256)
-        .open()) {
-    reader.forEach(m -> handle(m));                 // per-record, ack after each page
-    // or stay manual: fetch() → handle records → ack()
-    for (var page = reader.fetch(); !page.records().isEmpty(); page = reader.fetch()) {
-        page.records().forEach(m -> handle(m));
-        reader.ack();
-    }
+        .maxPageSize(250)
+        .open();
+try (var pump = reader.listen(m -> handle(m))) {    // SDK-owned thread — returns now
+    // … the service's other work runs untouched; pump.failure() surfaces
+    //    a handler error; pump.close() stops + closes, page unacked → replays
 }
+// or stay manual: fetch() → handle records → ack()
 
 var writer = client.createWriter(shop, shop.getFeed("orders"))
         .writerId("orders.ingest")
@@ -265,9 +263,9 @@ explicit escape hatches for the same wire contract.
 | Schemas | `setDomainSchema` `setFeedSchema` `clearDomainSchema` `clearFeedSchema` · `Domain.schema()` `feedSchema()` `declaredFeedSchema()` · `SchemaDecl`/`FeedSchema` — `json`, `jsonschema`, `avro`, `protobuf`, `text`, `bytes`, `custom.<name>` |
 | Feeds | `feed(name[, keyType/Codec, valueType/Codec])` → `Feed<K,V>` · `useCompression()` · `records()` `fetch(..)` · `writer(..)` `append(..)` `reader(..)` `subscribe(..)` `consumer(..)` |
 | Writing | `FeedWriter.append(k, v)` / `append(k, v, metadata)` / `append(FeedEvent)` (event time + Metadata) · `appendBatch`/`appendAll` · `appendAsync` · `reopen()` `sessionEpoch()` `useCompression()` · idempotent `request_id` |
-| Reading | `FeedReader.forEach(handler)` per-record pump · `forEachWhile` early-stop · `fetch([limit])` `ack()` `ack(cursor)` `acknowledgedCursor()` `close()` · durable `readerId` · `ReaderStart` — `Beginning`, `End`, `Now`, `cursor`, `timestamp(Instant)` |
+| Reading | `FeedReader.listen(handler)` SDK-owned pump thread → `Pump` (`close()` `failure()` `running()`) · `forEach(handler)` blocking pump · `forEachWhile` early-stop · `fetch([limit])` `ack()` `ack(cursor)` `acknowledgedCursor()` `close()` · durable `readerId` · `ReaderStart` — `Beginning`, `End`, `Now`, `cursor`, `timestamp(Instant)` |
 | Temporary fetches | `Feed.fetch(after, limit)` / `feeds().temporaryFetch(feed, options)` — `after_event_time_ns` seeks, `new_only`, `tail` + `wait_ms` long-poll · `feeds().load(feed, start, sink)` |
-| Consumers | `feed.consumer(reader)` → `FeedConsumer`: `startAt(..)` `capacity(..)` `onRecord(..)` `onError(..)` `backoff(..)` `runAsync()` `lastError()` `close()` |
+| Consumers | `feed.consumer(reader)` → `FeedConsumer`: `startAt(..)` `maxPageSize(..)` `onRecord(..)` `onError(..)` `backoff(..)` `runAsync()` `lastError()` `close()` |
 | Subscription members | `member(name)` → `Member`: `claim([workId, leaseTicks])` `renew` `release` `transfer` `fetch(work, limit)` `ack(work, page)` — shared progress + RF3 work leases · `feed.subscribe(..)` managed loop · `seekSubscription` `subscriptionMemberState` |
 | StateStores | `stateStore(name[, class/Codec])` → `StateStore<K,V>`: `put` `get`/`getStrict` `find` `findBy` `getOrDefault` `getBy`/`getByStrict` `delete` `page` `iterate` `clear` `sync` `rebuild` · `view(codecs)` · `stateStores().define(spec, source)` `drop(name)` |
 | Indexes | `queryIndex(name, IndexPredicate)` → `IndexPage` · `IndexPredicate.exact/prefix/range` + `IndexBound` · declared via `Commands.defineIndex` `getIndex` `rebuildIndex` |

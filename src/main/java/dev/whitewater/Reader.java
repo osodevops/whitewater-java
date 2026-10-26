@@ -44,12 +44,12 @@ public final class Reader implements AutoCloseable {
         this.reader = Objects.requireNonNull(reader);
     }
 
-    /** Open the session with the bounded fetch capacity. */
-    Reader open(int capacity) {
+    /** Open the session with the bounded fetch page size. */
+    Reader open(int maxPageSize) {
         var body = Transport.json().createObjectNode();
         body.put("request_id", UUID.randomUUID().toString());
         body.put("reader", reader);
-        body.put("capacity", capacity);
+        body.put("capacity", maxPageSize);
         this.session = Wire.readerSession(transport.post("/v1/readers/open", body));
         return this;
     }

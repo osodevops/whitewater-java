@@ -16,7 +16,7 @@ import java.util.Objects;
  * try (var reader = client.createReader(shop, shop.getFeed("orders"))
  *         .readerId("fulfillment")            // the Kafka groupId analogue
  *         .readerStartPoint(Beginning)        // first-time start — like auto.offset.reset
- *         .capacity(256)
+ *         .maxPageSize(256)
  *         .open()) {
  *     for (var page = reader.fetch(); !page.records().isEmpty(); page = reader.fetch()) {
  *         page.records().forEach(m -> handle(m.value()));
@@ -38,7 +38,7 @@ public final class ReaderBuilder<K, V> {
     private final Feed<K, V> feed;
     private String readerId;
     private ReaderStart start = ReaderStart.beginning();
-    private int capacity = 128;
+    private int maxPageSize = 128;
 
     ReaderBuilder(WhitewaterClient client, Feed<K, V> feed) {
         this.client = Objects.requireNonNull(client);
@@ -66,12 +66,12 @@ public final class ReaderBuilder<K, V> {
         return this;
     }
 
-    /** Bounded fetch page capacity — the default is 128. */
-    public ReaderBuilder<K, V> capacity(int capacity) {
-        if (capacity <= 0) {
-            throw new IllegalArgumentException("capacity must be positive");
+    /** Max records delivered per fetch page — the default is 128. */
+    public ReaderBuilder<K, V> maxPageSize(int maxPageSize) {
+        if (maxPageSize <= 0) {
+            throw new IllegalArgumentException("maxPageSize must be positive");
         }
-        this.capacity = capacity;
+        this.maxPageSize = maxPageSize;
         return this;
     }
 
@@ -92,7 +92,7 @@ public final class ReaderBuilder<K, V> {
     public FeedReader<K, V> open() {
         var id = requireId();
         feed.ensureReader(id, start);
-        return new FeedReader<>(client.reader(id, capacity), feed.keyCodec(), feed.valueCodec());
+        return new FeedReader<>(client.reader(id, maxPageSize), feed.keyCodec(), feed.valueCodec());
     }
 
     private String requireId() {

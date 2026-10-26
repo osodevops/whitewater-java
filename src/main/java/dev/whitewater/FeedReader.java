@@ -141,6 +141,80 @@ public final class FeedReader<K, V> implements AutoCloseable {
         }
     }
 
+    /**
+     * Deliver records on an SDK-owned thread — returns immediately:
+     * <pre>{@code
+     * try (var pump = reader.listen(m -> handle(m))) {
+     *     // the service keeps running; the pump owns a daemon thread
+     * }
+     * }</pre>
+     * Same delivery semantics as {@link #forEach}: one record at a
+     * time, each page acked after its records are handled, empty
+     * fetches paced on the server's {@code retry_after_ms}. A thrown
+     * handler stops the pump — the in-flight page stays unacked and
+     * replays; {@link Pump#failure()} carries the error.
+     */
+    public Pump listen(Consumer<FeedMessage<K, V>> handler) {
+        Objects.requireNonNull(handler, "handler");
+        return new Pump(handler);
+    }
+
+    /**
+     * The SDK-owned pump returned by {@link #listen}. {@link #close()}
+     * stops the thread and closes the reader session — the in-flight
+     * page stays unacked so its tail replays on the next open.
+     * {@link #failure()} reports why the pump died (a thrown handler
+     * or a transport error), or {@code null} while running / after a
+     * clean stop.
+     */
+    public final class Pump implements AutoCloseable {
+
+        private final Thread thread;
+        private volatile boolean stopped;
+        private volatile Throwable failure;
+
+        private Pump(Consumer<FeedMessage<K, V>> handler) {
+            thread = new Thread(() -> run(handler), "ww-reader-" + reader.reader());
+            thread.setDaemon(true);
+            thread.start();
+        }
+
+        private void run(Consumer<FeedMessage<K, V>> handler) {
+            try {
+                forEachWhile(m -> {
+                    handler.accept(m);
+                    return !stopped;
+                });
+            } catch (Throwable t) {
+                if (!stopped && !closed) {
+                    failure = t;
+                }
+            }
+        }
+
+        /** The error that stopped the pump, or {@code null}. */
+        public Throwable failure() {
+            return failure;
+        }
+
+        /** Whether the pump thread is still delivering. */
+        public boolean running() {
+            return thread.isAlive();
+        }
+
+        /** Stop the pump and close the reader session. */
+        @Override
+        public void close() {
+            stopped = true;
+            FeedReader.this.close();
+            try {
+                thread.join(10_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
     /** Close the session; durable acknowledged progress survives. */
     @Override
     public void close() {

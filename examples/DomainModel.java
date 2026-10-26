@@ -42,7 +42,7 @@ public final class DomainModel {
         try (var reader = client.createReader(shop, shop.getFeed("orders"))
                 .readerId("shop.fulfillment")
                 .readerStartPoint(Beginning)
-                .capacity(64)
+                .maxPageSize(64)
                 .open()) {
             for (var page = reader.fetch(); !page.records().isEmpty(); page = reader.fetch()) {
                 page.records().forEach(m ->

@@ -45,7 +45,7 @@ public final class FeedConsumer<K, V> implements AutoCloseable {
     private final String readerName;
 
     private ReaderStart start = ReaderStart.beginning();
-    private int capacity = 128;
+    private int maxPageSize = 128;
     private Duration initialBackoff = Duration.ofMillis(250);
     private Duration maxBackoff = Duration.ofSeconds(30);
     private Consumer<FeedMessage<K, V>> onRecord;
@@ -73,9 +73,9 @@ public final class FeedConsumer<K, V> implements AutoCloseable {
         return this;
     }
 
-    /** Records fetched per page (default 128). */
-    public FeedConsumer<K, V> capacity(int capacity) {
-        this.capacity = capacity;
+    /** Max records delivered per page (default 128). */
+    public FeedConsumer<K, V> maxPageSize(int maxPageSize) {
+        this.maxPageSize = maxPageSize;
         return this;
     }
 
@@ -129,7 +129,7 @@ public final class FeedConsumer<K, V> implements AutoCloseable {
                 Subscription sub;
                 try {
                     sub = feed.subscribeTyped(
-                            readerName, start, capacity,
+                            readerName, start, maxPageSize,
                             records -> {
                                 for (var record : records) {
                                     try {
