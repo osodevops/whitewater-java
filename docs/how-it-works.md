@@ -85,12 +85,15 @@ client.wcl("""
     """);
 ```
 
-The same calls through the typed builders — each serializes one WCL
-statement and calls `wcl` internally:
+The same calls through the typed helpers — each serializes one WCL
+statement and calls `wcl` internally. The Domain-typed surface composes
+names for you: hand it the relative name and it prefixes the Domain:
 
 ```java
 client.createDomain("shop");                         // CREATE DOMAIN shop;
-client.createFeed("shop.orders");                    // CREATE FEED shop.orders;
+var shop = client.getDomain("shop");                 // verifies + materializes
+
+shop.createFeed("orders");                           // CREATE FEED shop.orders;
 client.createWriter("orders.writer", "shop.orders");
 client.openWriterSession("orders.writer");           // epoch in .data()
 client.createReader("audit", "shop.orders", ReaderStart.beginning());
@@ -98,6 +101,10 @@ client.listFeeds();                                  // SHOW FEEDS;
 client.seekReader("audit", ReaderStart.now());       // SEEK READER ... TO NOW;
 client.dropFeed("shop.orders");                      // DROP FEED shop.orders;
 ```
+
+`client.createFeed("shop.orders")` with the fully-qualified name remains
+the flat-name form; `domain.createFeed("orders")` is the same statement
+with the Domain prefix composed for you.
 
 `client.commands(...)` is the second door — the typed JSON command
 path. Two forms:

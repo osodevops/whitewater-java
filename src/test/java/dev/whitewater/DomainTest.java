@@ -183,6 +183,20 @@ class DomainTest {
     }
 
     @Test
+    void createFeedDeclaresInsideTheDomain() {
+        client.createDomain("shop");
+        var shop = client.getDomain("shop");
+
+        shop.createFeed("orders");                     // CREATE FEED shop.orders
+        shop.createFeed("shop.daily");                 // qualified form also works
+
+        assertEquals(List.of("shop.daily", "shop.orders"),
+                shop.refresh().feedNames());
+        assertThrows(IllegalArgumentException.class,
+                () -> shop.createFeed("BAD.NAME"));    // grammar refused locally
+    }
+
+    @Test
     void feedSchemaLayersTheFeedOverrideOverTheDomainDefault() {
         shopCatalog();
         client.setDomainSchema("shop",

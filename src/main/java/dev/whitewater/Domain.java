@@ -176,6 +176,15 @@ public final class Domain {
      * accepted; a name outside this Domain is refused locally. Pure
      * name composition — no I/O.
      */
+    /**
+     * {@code CREATE FEED} inside this Domain: {@code shop.createFeed("orders")}
+     * declares {@code shop.orders}. The next {@link #refresh()} (or a
+     * lazier accessor's first load) sees the new Feed in {@link #feeds()}.
+     */
+    public ControlExecution createFeed(String relative) {
+        return client.createFeed(resolve(relative));
+    }
+
     public Feed<String, byte[]> feed(String relative) {
         return feed(relative, Codecs.utf8(), Codecs.bytes());
     }

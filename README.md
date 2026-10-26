@@ -79,7 +79,9 @@ friendliest surface starts at the Domain and navigates down — the Kafka
 ```java
 import static dev.whitewater.model.ReaderStart.*;   // Beginning, End
 
+client.createDomain("shop");                        // CREATE DOMAIN shop;
 Domain shop = client.getDomain("shop");             // verifies + materializes now
+shop.createFeed("orders");                          // CREATE FEED shop.orders;
 shop.feedNames();                                 // [shop.orders, shop.returns]
 shop.getFeeds("order");                           // prefix-filtered Feed handles
 shop.readers(); shop.writers(); shop.subscriptions();
@@ -253,7 +255,7 @@ explicit escape hatches for the same wire contract.
 | Area | API |
 |---|---|
 | Client & transport | `WhitewaterClient.builder().apiKey(..).endpoints(..).timeout(..)` · `healthy()` `health()` `checkCompatible()` · `close()` |
-| Typed Domains | `domain(name)` lazy / `getDomain(name)` eager · `feeds()` `getFeeds(prefix)` `feedNames()` · `feed(..)`/`getFeed(..)` typed handles · `readers()` `writers()` `subscriptions()` `pipes()` `indexes()` `stateStores()` · `describe()` `historyPolicy()` `domainId()` `revision()` · `refresh()` |
+| Typed Domains | `domain(name)` lazy / `getDomain(name)` eager · `feeds()` `getFeeds(prefix)` `feedNames()` · `feed(..)`/`getFeed(..)` typed handles · `createFeed(relative)` declares inside the Domain · `readers()` `writers()` `subscriptions()` `pipes()` `indexes()` `stateStores()` · `describe()` `historyPolicy()` `domainId()` `revision()` · `refresh()` |
 | Schemas | `setDomainSchema` `setFeedSchema` `clearDomainSchema` `clearFeedSchema` · `Domain.schema()` `feedSchema()` `declaredFeedSchema()` · `SchemaDecl`/`FeedSchema` — `json`, `jsonschema`, `avro`, `protobuf`, `text`, `bytes`, `custom.<name>` |
 | Feeds | `feed(name[, keyType/Codec, valueType/Codec])` → `Feed<K,V>` · `useCompression()` · `records()` `fetch(..)` · `writer(..)` `append(..)` `reader(..)` `subscribe(..)` `consumer(..)` |
 | Writing | `FeedWriter.append(k, v)` / `append(k, v, metadata)` / `append(FeedEvent)` (event time + Metadata) · `appendBatch`/`appendAll` · `appendAsync` · `reopen()` `sessionEpoch()` `useCompression()` · idempotent `request_id` |
