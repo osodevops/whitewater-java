@@ -25,13 +25,16 @@ shop.createFeed("orders");
 shop.createFeed("orders.dlq");            // dead-letter feed
 
 // ---- produce (usually a different service) -------------------------
-var writer = shop.createWriter("orders").writerId("orders.ingest").open();
-writer.append("order-1", "{\"total\":42}".getBytes());
+// Bind codecs on the Feed handle — the SDK serializes, never getBytes.
+var orders = shop.feed("orders", String.class);       // JSON text payloads
+var writer = shop.createWriter(orders).writerId("orders.ingest").open();
+writer.append("order-1", "{\"total\":42}");
 
 // ---- consume --------------------------------------------------------
-var deadLetter = shop.createWriter("orders.dlq")
+var dlq = shop.feed("orders.dlq", String.class);
+var deadLetter = shop.createWriter(dlq)
         .writerId("fulfillment.dlq").open();
-var reader = shop.createReader("orders")
+var reader = shop.createReader(orders)
         .readerId("fulfillment")          // durable id — survives restarts
         .readerStartPoint(Beginning)      // first-declare only
         .maxPageSize(250)                 // max records per fetch page

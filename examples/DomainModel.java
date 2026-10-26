@@ -31,15 +31,16 @@ public final class DomainModel {
         System.out.println("filtered: " + shop.getFeeds("order").stream()
                 .map(f -> f.name()).toList());
 
-        // Fluent Writer — declares if missing, opens a session, codecs bound.
-        var writer = client.createWriter(shop, shop.getFeed("orders"))
+        // Fluent Writer on a codec-bound Feed — declares if missing,
+        // opens a session; the SDK serializes, never getBytes.
+        var writer = client.createWriter(shop, shop.feed("orders", String.class))
                 .writerId("shop.ingest")
                 .open();
-        writer.append("order-1", "{\"total\":42}".getBytes());
+        writer.append("order-1", "{\"total\":42}");
 
         // Fluent Reader — readerId is the durable consume identity
         // (Kafka groupId), readerStartPoint the first-time offset.
-        try (var reader = client.createReader(shop, shop.getFeed("orders"))
+        try (var reader = client.createReader(shop, shop.feed("orders", String.class))
                 .readerId("shop.fulfillment")
                 .readerStartPoint(Beginning)
                 .maxPageSize(64)
@@ -47,7 +48,7 @@ public final class DomainModel {
             for (var page = reader.fetch(); !page.records().isEmpty(); page = reader.fetch()) {
                 page.records().forEach(m ->
                         System.out.println("delivered " + m.key() + " -> "
-                                + new String(m.value())));
+                                + m.value()));
                 reader.ack();
             }
         }

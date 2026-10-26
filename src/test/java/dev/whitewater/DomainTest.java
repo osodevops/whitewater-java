@@ -110,10 +110,10 @@ class DomainTest {
     void readerBuilderDeclaresAndOpensATypedReader() {
         shopCatalog();
         var shop = client.getDomain("shop");
-        client.createWriter(shop, shop.getFeed("orders"))
+        client.createWriter(shop, shop.feed("orders", String.class))
                 .writerId("shop.ingest2")
                 .open()
-                .append("order-1", "{\"total\":42}".getBytes());
+                .append("order-1", "{\"total\":42}");
 
         try (var reader = client.createReader(shop, shop.getFeed("orders"))
                 .readerId("shop.fulfillment")
@@ -166,8 +166,8 @@ class DomainTest {
 
         // shop.createWriter / shop.createReader resolve relative names —
         // the whole service shape hangs off the Domain.
-        var writer = shop.createWriter("orders").writerId("shop.w1").open();
-        writer.append("order-1", "{\"total\":5}".getBytes());
+        var writer = shop.createWriter(shop.feed("orders", String.class)).writerId("shop.w1").open();
+        writer.append("order-1", "{\"total\":5}");
 
         try (var reader = shop.createReader("orders")
                 .readerId("shop.r1")
@@ -191,9 +191,9 @@ class DomainTest {
     void readerForEachDeliversRecordsAndAcksPages() {
         shopCatalog();
         var shop = client.getDomain("shop");
-        var writer = shop.createWriter("orders").writerId("shop.w2").open();
-        writer.append("order-1", "1".getBytes());
-        writer.append("order-2", "2".getBytes());
+        var writer = shop.createWriter(shop.feed("orders", String.class)).writerId("shop.w2").open();
+        writer.append("order-1", "1");
+        writer.append("order-2", "2");
 
         // maxPageSize(1) → one record per page: page 1 delivers + acks,
         // the handler stops on page 2 before it is acked.
@@ -220,8 +220,8 @@ class DomainTest {
     void readerListenPumpsOnAnSdkOwnedThread() throws Exception {
         shopCatalog();
         var shop = client.getDomain("shop");
-        shop.createWriter("orders").writerId("shop.w3").open()
-                .append("order-1", "1".getBytes());
+        shop.createWriter(shop.feed("orders", String.class)).writerId("shop.w3").open()
+                .append("order-1", "1");
 
         var reader = shop.createReader("orders")
                 .readerId("shop.listener")
@@ -243,8 +243,8 @@ class DomainTest {
     void readerListenSurfacesAHandlerFailureAndReplays() throws Exception {
         shopCatalog();
         var shop = client.getDomain("shop");
-        shop.createWriter("orders").writerId("shop.w4").open()
-                .append("order-1", "1".getBytes());
+        shop.createWriter(shop.feed("orders", String.class)).writerId("shop.w4").open()
+                .append("order-1", "1");
 
         var reader = shop.createReader("orders")
                 .readerId("shop.failing")
@@ -268,10 +268,10 @@ class DomainTest {
         shopCatalog();
         var shop = client.getDomain("shop");
 
-        var writer = client.createWriter(shop, shop.getFeed("orders"))
+        var writer = client.createWriter(shop, shop.feed("orders", String.class))
                 .writerId("shop.orders.w")
                 .open();
-        writer.append("k1", "v1".getBytes());
+        writer.append("k1", "v1");
         assertTrue(client.getDomain("shop").writers().contains("shop.orders.w"));
     }
 
