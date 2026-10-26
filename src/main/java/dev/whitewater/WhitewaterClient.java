@@ -397,7 +397,8 @@ public final class WhitewaterClient implements AutoCloseable {
     /**
      * A typed facade over Feed {@code name} — the immutable temporal
      * history on the Nodes. The default binding takes String keys and
-     * {@code byte[]} payloads; the overloads bind
+     * UTF-8 {@code String} payloads — getBytes lives in the
+     * SDK, so plain JSON flows un-schema-backed; the overloads bind
      * {@link dev.whitewater.model.Codec}s so the SDK serializes
      * keys/payloads for you in both directions:
      * <pre>{@code
@@ -408,9 +409,9 @@ public final class WhitewaterClient implements AutoCloseable {
      * }
      * }</pre>
      */
-    public Feed<String, byte[]> feed(String name) {
+    public Feed<String, String> feed(String name) {
         return Feed.bound(this, name,
-                dev.whitewater.model.Codecs.utf8(), dev.whitewater.model.Codecs.bytes());
+                dev.whitewater.model.Codecs.utf8(), dev.whitewater.model.Codecs.utf8());
     }
 
     /**
@@ -480,7 +481,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@link #createReader(Domain, Feed)} by relative Feed name. */
-    public ReaderBuilder<String, byte[]> createReader(Domain domain, String feed) {
+    public ReaderBuilder<String, String> createReader(Domain domain, String feed) {
         return createReader(domain, domain.feed(feed));
     }
 
@@ -494,7 +495,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@link #createWriter(Domain, Feed)} by relative Feed name. */
-    public WriterBuilder<String, byte[]> createWriter(Domain domain, String feed) {
+    public WriterBuilder<String, String> createWriter(Domain domain, String feed) {
         return createWriter(domain, domain.feed(feed));
     }
 

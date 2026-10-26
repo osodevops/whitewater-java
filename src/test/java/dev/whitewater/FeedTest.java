@@ -208,14 +208,24 @@ class FeedTest {
     // ---- bindings --------------------------------------------------------
 
     @Test
-    void defaultBindingIsUtf8KeysAndRawPayloads() {
-        Feed<String, byte[]> feed = client.feed("orders.events");
+    void defaultBindingIsUtf8KeysAndPayloads() {
+        Feed<String, String> feed = client.feed("orders.events");
         assertEquals("orders.events", feed.name());
         var message = FeedMessage.decode(
                 new dev.whitewater.model.FeedRecord(Cursor.of("c"), null, null, 1, 0, 0,
                         "k".getBytes(), "v".getBytes(), Map.of()),
                 feed.keyCodec(), feed.valueCodec());
         assertEquals("k", message.key());
+        assertEquals("v", message.value());
+    }
+
+    @Test
+    void byteArrayPayloadsBindThroughAnExplicitCodec() {
+        Feed<String, byte[]> feed = client.feed("orders.events", byte[].class);
+        var message = FeedMessage.decode(
+                new dev.whitewater.model.FeedRecord(Cursor.of("c"), null, null, 1, 0, 0,
+                        "k".getBytes(), "v".getBytes(), Map.of()),
+                feed.keyCodec(), feed.valueCodec());
         assertArrayEquals("v".getBytes(), message.value());
     }
 

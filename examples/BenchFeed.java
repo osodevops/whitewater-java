@@ -103,7 +103,7 @@ public class BenchFeed {
         String feedName = domain + ".events";
         client.createDomain(domain);
         client.createFeed(feedName);
-        Feed<String, byte[]> feed = client.feed(feedName);
+        Feed<String, byte[]> feed = client.feed(feedName, byte[].class);
 
         byte[] payload = new byte[bytes];
         for (int i = 0; i < bytes; i++) {

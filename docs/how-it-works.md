@@ -177,7 +177,7 @@ try (var reader = shop.createReader("orders")     // = client.createReader(shop,
         .readerId("fulfillment")         // durable consume identity — Kafka groupId
         .readerStartPoint(Beginning)     // first-time start — auto.offset.reset
         .maxPageSize(256)
-        .open()) {                        // FeedReader<String, byte[]>
+        .open()) {                        // FeedReader<String, String>
     reader.forEach(m -> handle(m));      // per-record pump: deliver → ack each page
     // or stay manual: fetch() → handle → ack()
 }

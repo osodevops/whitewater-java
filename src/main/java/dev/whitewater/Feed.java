@@ -34,11 +34,11 @@ import java.util.function.Consumer;
  * }
  * }</pre>
  *
- * <p>{@link WhitewaterClient#feed(String)} binds String keys with raw
- * {@code byte[]} payloads; pass a payload {@link Codec} or class (or
- * key + payload Codecs) for objects. {@link #view} rebinds the same
- * feed under different Codecs — {@code feed.view(String.class, byte[].class)}
- * is the escape hatch to raw bytes.
+ * <p>{@link WhitewaterClient#feed(String)} binds String keys with
+ * UTF-8 {@code String} payloads — un-schema-backed JSON flows with zero
+ * codec ceremony. Pass a payload {@link Codec} or class (or key +
+ * payload Codecs) for objects; {@code feed.view(String.class,
+ * byte[].class)} is the escape hatch to raw bytes.
  */
 public final class Feed<K, V> {
 

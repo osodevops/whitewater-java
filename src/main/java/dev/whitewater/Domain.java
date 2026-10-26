@@ -86,13 +86,13 @@ public final class Domain {
      * Every Feed in this Domain as typed {@link Feed} handles, sorted by
      * name. Materializes the snapshot.
      */
-    public List<Feed<String, byte[]>> feeds() {
+    public List<Feed<String, String>> feeds() {
         return feeds(null);
     }
 
     /** {@link #feeds()} filtered to relative names starting with {@code prefix}. */
-    public List<Feed<String, byte[]>> feeds(String prefix) {
-        var result = new ArrayList<Feed<String, byte[]>>();
+    public List<Feed<String, String>> feeds(String prefix) {
+        var result = new ArrayList<Feed<String, String>>();
         for (var feed : snapshot().feeds) {
             var relative = relativeName(feed);
             if (prefix == null || relative.startsWith(prefix)) {
@@ -103,7 +103,7 @@ public final class Domain {
     }
 
     /** Alias of {@link #feeds(String)}. */
-    public List<Feed<String, byte[]>> getFeeds(String prefix) {
+    public List<Feed<String, String>> getFeeds(String prefix) {
         return feeds(prefix);
     }
 
@@ -189,7 +189,7 @@ public final class Domain {
      *         .open();
      * }</pre>
      */
-    public ReaderBuilder<String, byte[]> createReader(String relative) {
+    public ReaderBuilder<String, String> createReader(String relative) {
         return client.createReader(this, feed(relative));
     }
 
@@ -203,7 +203,7 @@ public final class Domain {
      * Feed inside this Domain — {@code shop.createWriter("orders")}
      * binds {@code shop.orders}.
      */
-    public WriterBuilder<String, byte[]> createWriter(String relative) {
+    public WriterBuilder<String, String> createWriter(String relative) {
         return client.createWriter(this, feed(relative));
     }
 
@@ -219,12 +219,12 @@ public final class Domain {
      * accepted; a name outside this Domain is refused locally. Pure
      * name composition — no I/O.
      */
-    public Feed<String, byte[]> feed(String relative) {
-        return feed(relative, Codecs.utf8(), Codecs.bytes());
+    public Feed<String, String> feed(String relative) {
+        return feed(relative, Codecs.utf8(), Codecs.utf8());
     }
 
     /** Alias of {@link #feed(String)}. */
-    public Feed<String, byte[]> getFeed(String relative) {
+    public Feed<String, String> getFeed(String relative) {
         return feed(relative);
     }
 
