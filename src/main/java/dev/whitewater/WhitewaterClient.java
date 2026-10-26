@@ -308,6 +308,18 @@ public final class WhitewaterClient implements AutoCloseable {
         return show("GRANTS");
     }
 
+    public ControlExecution listPipes() {
+        return show("PIPES");
+    }
+
+    public ControlExecution listIndexes() {
+        return show("INDEXES");
+    }
+
+    public ControlExecution listStateStores() {
+        return show("STATESTORES");
+    }
+
     private ControlExecution show(String kind) {
         return wcl("SHOW " + kind);
     }
@@ -407,6 +419,71 @@ public final class WhitewaterClient implements AutoCloseable {
     public <K, V> Feed<K, V> feed(
             String name, dev.whitewater.model.Codec<K> keyCodec, dev.whitewater.model.Codec<V> valueCodec) {
         return Feed.bound(this, name, keyCodec, valueCodec);
+    }
+
+    // ---- Domains ---------------------------------------------------------------
+    // A Domain is the administrative namespace owning every Feed it
+    // prefixes (shop owns shop.orders). The strongly-typed entry point:
+    //
+    //   Domain shop = client.domain("shop");
+    //   var reader = client.createReader(shop, shop.getFeed("orders"))
+    //           .readerId("fulfillment")
+    //           .readerStartPoint(ReaderStart.Beginning)
+    //           .open();
+
+    /**
+     * A lazy {@link Domain} handle — no I/O until a catalog accessor
+     * ({@link Domain#feeds()}, {@link Domain#describe()}, …) is called;
+     * {@link Domain#feed(String)} name composition stays free.
+     */
+    public Domain domain(String name) {
+        return new Domain(this, name);
+    }
+
+    /**
+     * {@link #domain(String)} that materializes immediately — verifies
+     * the Domain exists now and caches its catalog view.
+     */
+    public Domain getDomain(String name) {
+        return domain(name).refresh();
+    }
+
+    /**
+     * Fluent declaration + session-open of a durable named Reader on
+     * {@code feed} inside {@code domain} — see {@link ReaderBuilder}.
+     * The feed must live under the Domain's prefix.
+     */
+    public <K, V> ReaderBuilder<K, V> createReader(Domain domain, Feed<K, V> feed) {
+        requireOwnedFeed(domain, feed.name());
+        return new ReaderBuilder<>(this, feed);
+    }
+
+    /** {@link #createReader(Domain, Feed)} by relative Feed name. */
+    public ReaderBuilder<String, byte[]> createReader(Domain domain, String feed) {
+        return createReader(domain, domain.feed(feed));
+    }
+
+    /**
+     * Fluent declaration + session-open of a durable named Writer on
+     * {@code feed} inside {@code domain} — see {@link WriterBuilder}.
+     */
+    public <K, V> WriterBuilder<K, V> createWriter(Domain domain, Feed<K, V> feed) {
+        requireOwnedFeed(domain, feed.name());
+        return new WriterBuilder<>(this, feed);
+    }
+
+    /** {@link #createWriter(Domain, Feed)} by relative Feed name. */
+    public WriterBuilder<String, byte[]> createWriter(Domain domain, String feed) {
+        return createWriter(domain, domain.feed(feed));
+    }
+
+    private static void requireOwnedFeed(Domain domain, String feed) {
+        Objects.requireNonNull(domain, "domain is required");
+        Objects.requireNonNull(feed, "feed is required");
+        if (!feed.startsWith(domain.name() + ".")) {
+            throw new IllegalArgumentException(
+                    "feed '" + feed + "' is outside Domain '" + domain.name() + "'");
+        }
     }
 
     /**

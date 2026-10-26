@@ -129,6 +129,69 @@ Plane.
 including stores: `client.wcl("DROP STATESTORE accounts.employees")` ≡
 `store.drop()` ≡ `Commands.of().drop(ResourceKind.STATE_STORE, ...)`.
 
+## Domains — strongly-typed navigation
+
+A Domain owns every Feed it prefixes (`shop` owns `shop.orders`,
+including deeper names like `shop.orders.eu`). `client.domain(name)`
+returns a lazy handle; `client.getDomain(name)` verifies the Domain
+exists and materializes its catalog view immediately.
+
+The first catalog accessor issues **one batched control read** —
+`describe domain` plus every `show` listing in a single
+`POST /v1/admin/commands` — joins rows by `space_id` (readers/writers
+join through their Feed's `feed_id`), and caches the snapshot:
+
+```java
+Domain shop = client.getDomain("shop");
+shop.domainId();            // immutable id — survives renames
+shop.describe();            // raw DESCRIBE DOMAIN row (status, history_policy)
+shop.feeds();               // List<Feed> — every Feed in the Domain
+shop.getFeeds("order");     // prefix filter on the relative name
+shop.readers();             // Readers on this Domain's Feeds
+shop.writers();             shop.subscriptions();
+shop.pipes();               shop.indexes();   shop.stateStores();
+shop.refresh();             // re-pull the snapshot
+```
+
+`domain.feed("orders")` / `domain.getFeed("orders")` resolve
+`shop.orders` — pure name composition, zero I/O, codecs bindable exactly
+like `client.feed(...)`.
+
+### Fluent Readers and Writers
+
+`client.createReader(domain, feed)` and `createWriter(domain, feed)`
+return builders that declare the resource (idempotently) and open a
+session with the Feed's codecs bound:
+
+```java
+import static dev.whitewater.model.ReaderStart.*;   // Beginning, End
+
+try (var reader = client.createReader(shop, shop.getFeed("orders"))
+        .readerId("fulfillment")         // durable consume identity — Kafka groupId
+        .readerStartPoint(Beginning)     // first-time start — auto.offset.reset
+        .capacity(256)
+        .open()) {                        // FeedReader<String, byte[]>
+    var page = reader.fetch();
+    reader.ack();
+}
+```
+
+- `readerId` is required — it *is* the progress identity; reopening the
+  same name resumes the acknowledged frontier.
+- `readerStartPoint` applies only at first declaration: `Beginning`
+  (oldest retained), `End` (new records only), `cursor(c)`, or
+  `timestamp(Instant)` — the same mapping Kafka's
+  `auto.offset.reset=earliest|latest` gives a fresh group.
+- `capacity` bounds each `fetch` page (default 128).
+- `.declare()` creates the catalog row without opening a session —
+  useful for provisioning ahead of consumers.
+- The same shape exists for producers:
+  `client.createWriter(shop, feed).writerId("orders.ingest").open()`
+  returns a `FeedWriter<K,V>`.
+
+`domain.feed(...)` handles are codec-compatible `Feed<K,V>` facades —
+typed reads come back as `FeedMessage<K,V>` with decoded keys/values.
+
 ## Reading
 
 Three shapes, in increasing durability:

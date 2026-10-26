@@ -172,7 +172,7 @@ public final class Feed<K, V> {
      * fetch capacity, and returns decoded {@link FeedMessage}s.
      */
     public FeedReader<K, V> reader(String readerName, int capacity) {
-        ensureReader(readerName);
+        ensureReader(readerName, ReaderStart.beginning());
         return new FeedReader<>(client.reader(readerName, capacity), keyCodec, valueCodec);
     }
 
@@ -227,7 +227,7 @@ public final class Feed<K, V> {
     }
 
     /** Declare the Writer when missing; an existing Writer is reused as-is. */
-    private void ensureWriter(String writerName) {
+    void ensureWriter(String writerName) {
         try {
             client.createWriter(writerName, name);
         } catch (WhitewaterException.Refused | WhitewaterException.Unavailable e) {
@@ -241,9 +241,9 @@ public final class Feed<K, V> {
     }
 
     /** Declare the Reader when missing; an existing Reader is reused as-is. */
-    private void ensureReader(String readerName) {
+    void ensureReader(String readerName, ReaderStart start) {
         try {
-            client.createReader(readerName, name);
+            client.createReader(readerName, name, start);
         } catch (WhitewaterException.Refused | WhitewaterException.Unavailable e) {
             if (!String.valueOf(e.getMessage()).contains("exists")) {
                 throw e;

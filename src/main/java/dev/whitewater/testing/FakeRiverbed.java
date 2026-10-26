@@ -83,6 +83,8 @@ public final class FakeRiverbed implements AutoCloseable {
     // Feed name -> committed records (insertion order).
     private final Map<String, List<Rec>> feeds = new LinkedHashMap<>();
     private final Map<String, Rec> byCursor = new HashMap<>();
+    // Domain name -> space_id (CREATE DOMAIN registers; feeds scope by prefix).
+    private final Map<String, String> domainIds = new LinkedHashMap<>();
     private final Map<String, String> writerFeed = new HashMap<>();
     private final Map<String, WriterSession> writers = new HashMap<>();
     private final Map<String, Reader> readers = new HashMap<>();
@@ -180,6 +182,7 @@ public final class FakeRiverbed implements AutoCloseable {
 
     private static final class Sub {
         String feed;
+        String domain;
         long ownershipEpoch = 1;
         long tick;
         int frontier;       // shared fetch frontier index
@@ -533,6 +536,10 @@ public final class FakeRiverbed implements AutoCloseable {
             feeds.computeIfAbsent(tok[4], f -> new ArrayList<>());
         } else if (tok.length >= 3 && eq(tok, 0, "CREATE") && eq(tok, 1, "FEED")) {
             feeds.computeIfAbsent(tok[2], f -> new ArrayList<>());
+        } else if (tok.length >= 3 && eq(tok, 0, "CREATE") && eq(tok, 1, "DOMAIN")) {
+            domainIds.computeIfAbsent(tok[2], FakeRiverbed::spaceId);
+        } else if (tok.length >= 3 && eq(tok, 0, "DESCRIBE")) {
+            return describeRow(tok[1], tok[2]);
         } else if (tok.length >= 4 && eq(tok, 0, "OPEN") && eq(tok, 1, "WRITER")
                 && eq(tok, 2, "SESSION")) {
             // OPEN WRITER SESSION <name>
@@ -564,9 +571,129 @@ public final class FakeRiverbed implements AutoCloseable {
                 default -> { }
             }
         } else if (tok.length >= 2 && eq(tok, 0, "SHOW")) {
-            data.putArray(tok[1].toLowerCase());
+            return showRows(tok[1].toLowerCase());
         }
         return data;
+    }
+
+    /** DESCRIBE <kind> <name> — the catalog row, or a missing-resource marker. */
+    private JsonNode describeRow(String kind, String name) {
+        ObjectNode row = obj();
+        switch (kind.toUpperCase()) {
+            case "DOMAIN", "SPACE" -> {
+                var id = domainIds.get(name);
+                if (id == null) {
+                    row.put("error", "Domain " + name + " not found");
+                    return row;
+                }
+                row.put("space_id", id).put("name", name)
+                        .put("status", "active").put("created_at_ns", 0);
+                row.putNull("history_policy");
+            }
+            case "FEED" -> {
+                if (!feeds.containsKey(name)) {
+                    row.put("error", "Feed " + name + " not found");
+                    return row;
+                }
+                row.put("feed_id", feedId(name)).put("name", name);
+                var space = spaceIdOf(name);
+                if (space == null) {
+                    row.putNull("space_id");
+                } else {
+                    row.put("space_id", space);
+                }
+                row.put("storage_name", name).put("status", "active").put("created_at_ns", 0);
+            }
+            default -> row.put("error", "unsupported DESCRIBE " + kind);
+        }
+        return row;
+    }
+
+    /** SHOW <kind> — catalog rows in the real server's array shape. */
+    private JsonNode showRows(String kind) {
+        ArrayNode rows = obj().arrayNode();
+        switch (kind) {
+            case "domains", "spaces" -> {
+                for (var entry : domainIds.entrySet()) {
+                    rows.add(obj().put("space_id", entry.getValue())
+                            .put("name", entry.getKey())
+                            .put("status", "active").put("created_at_ns", 0));
+                }
+            }
+            case "feeds" -> {
+                for (var feed : feeds.keySet()) {
+                    var row = obj().put("feed_id", feedId(feed)).put("name", feed)
+                            .put("storage_name", feed)
+                            .put("status", "active").put("created_at_ns", 0);
+                    var space = spaceIdOf(feed);
+                    if (space == null) {
+                        row.putNull("space_id");
+                    } else {
+                        row.put("space_id", space);
+                    }
+                    rows.add(row);
+                }
+            }
+            case "readers" -> {
+                for (var entry : readers.entrySet()) {
+                    var row = obj().put("reader_id", entry.getValue().readerId)
+                            .put("name", entry.getKey())
+                            .put("status", "active").put("created_at_ns", 0);
+                    if (entry.getValue().feed == null) {
+                        row.putNull("feed_id");
+                    } else {
+                        row.put("feed_id", feedId(entry.getValue().feed));
+                    }
+                    rows.add(row);
+                }
+            }
+            case "writers" -> {
+                for (var entry : writerFeed.entrySet()) {
+                    rows.add(obj()
+                            .put("writer_id", UUID.nameUUIDFromBytes(
+                                    ("writer:" + entry.getKey()).getBytes(StandardCharsets.UTF_8))
+                                    .toString())
+                            .put("name", entry.getKey())
+                            .put("feed_id", feedId(entry.getValue()))
+                            .put("status", "active").put("created_at_ns", 0));
+                }
+            }
+            case "subscriptions" -> {
+                for (var entry : subscriptions.entrySet()) {
+                    var row = obj()
+                            .put("subscription_id", UUID.nameUUIDFromBytes(
+                                    ("subscription:" + entry.getKey()).getBytes(StandardCharsets.UTF_8))
+                                    .toString())
+                            .put("name", entry.getKey())
+                            .put("status", "active").put("created_at_ns", 0);
+                    var space = entry.getValue().domain != null
+                            ? domainIds.get(entry.getValue().domain)
+                            : entry.getValue().feed == null ? null : spaceIdOf(entry.getValue().feed);
+                    if (space == null) {
+                        row.putNull("space_id");
+                    } else {
+                        row.put("space_id", space);
+                    }
+                    rows.add(row);
+                }
+            }
+            case "statestores" -> {
+                for (var entry : stores.entrySet()) {
+                    var row = obj().put("store_id", entry.getValue().storeId)
+                            .put("name", entry.getKey())
+                            .put("status", "active").put("created_at_ns", 0);
+                    var space = spaceIdOf(entry.getKey());
+                    if (space == null) {
+                        row.putNull("space_id");
+                    } else {
+                        row.put("space_id", space);
+                    }
+                    rows.add(row);
+                }
+            }
+            default -> { }
+        }
+        return rows;
     }
 
     private JsonNode commands(JsonNode body) {
@@ -601,8 +728,18 @@ public final class FakeRiverbed implements AutoCloseable {
                     s.sessionId = uuid();
                 }
             }
+            case "create_domain" -> domainIds.computeIfAbsent(
+                    command.path("name").asText(), FakeRiverbed::spaceId);
             case "create_feed" -> feeds.computeIfAbsent(
                     command.path("name").asText(), f -> new ArrayList<>());
+            case "describe" -> {
+                return describeRow(
+                        command.path("kind").asText().toUpperCase(),
+                        command.path("name").asText());
+            }
+            case "show" -> {
+                return showRows(command.path("kind").asText().toLowerCase());
+            }
             case "create_writer" -> {
                 writerFeed.put(command.path("name").asText(), command.path("feed").asText());
                 feeds.computeIfAbsent(command.path("feed").asText(), f -> new ArrayList<>());
@@ -621,6 +758,9 @@ public final class FakeRiverbed implements AutoCloseable {
                     s.feed = command.path("feed").asText();
                     feeds.computeIfAbsent(s.feed, f -> new ArrayList<>());
                     s.frontier = startIndex(command.path("start"), s.feed);
+                }
+                if (s.domain == null && command.hasNonNull("domain")) {
+                    s.domain = command.path("domain").asText();
                 }
             }
             case "seek_reader" -> {
@@ -668,7 +808,6 @@ public final class FakeRiverbed implements AutoCloseable {
                     });
                 }
             }
-            case "show" -> data.putArray(command.path("kind").asText(""));
             default -> { }
         }
         return data;
@@ -1035,6 +1174,27 @@ public final class FakeRiverbed implements AutoCloseable {
 
     private static String feedId(String feed) {
         return UUID.nameUUIDFromBytes(("feed:" + feed).getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    private static String spaceId(String domain) {
+        return UUID.nameUUIDFromBytes(("domain:" + domain).getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    /** Longest-prefix Domain owning {@code name} — mirrors the server's owning_space. */
+    private String owningDomain(String name) {
+        String best = null;
+        for (var domain : domainIds.keySet()) {
+            if (name.startsWith(domain + ".") && (best == null || domain.length() > best.length())) {
+                best = domain;
+            }
+        }
+        return best;
+    }
+
+    /** space_id of the Domain owning {@code resourceName}, or null when undeclared. */
+    private String spaceIdOf(String resourceName) {
+        var domain = owningDomain(resourceName);
+        return domain == null ? null : domainIds.get(domain);
     }
 
     // ---- state stores ------------------------------------------------------------

@@ -10,6 +10,16 @@ public final class ReaderStart {
 
     public enum Kind {BEGINNING, NOW, CURSOR, TIMESTAMP}
 
+    /**
+     * From the oldest retained record — the fluent constant for
+     * {@code import static dev.whitewater.model.ReaderStart.*;} then
+     * {@code readerStartPoint(Beginning)}.
+     */
+    public static final ReaderStart Beginning = new ReaderStart(Kind.BEGINNING, null, 0);
+
+    /** From records appended after creation — the "tail only" position. */
+    public static final ReaderStart End = new ReaderStart(Kind.NOW, null, 0);
+
     private final Kind kind;
     private final Cursor cursor;
     private final long timestampNs;
@@ -22,12 +32,12 @@ public final class ReaderStart {
 
     /** From the oldest retained record. */
     public static ReaderStart beginning() {
-        return new ReaderStart(Kind.BEGINNING, null, 0);
+        return Beginning;
     }
 
     /** From records appended after creation. */
     public static ReaderStart now() {
-        return new ReaderStart(Kind.NOW, null, 0);
+        return End;
     }
 
     /** From an opaque Cursor previously returned by the Riverbed. */
@@ -38,6 +48,13 @@ public final class ReaderStart {
     /** From a signed Unix epoch nanosecond timestamp. */
     public static ReaderStart timestampNs(long nanos) {
         return new ReaderStart(Kind.TIMESTAMP, null, nanos);
+    }
+
+    /** From an {@link Instant} — converted to epoch nanoseconds with overflow checking. */
+    public static ReaderStart timestamp(java.time.Instant when) {
+        java.util.Objects.requireNonNull(when, "when is required");
+        return timestampNs(Math.addExact(
+                Math.multiplyExact(when.getEpochSecond(), 1_000_000_000L), when.getNano()));
     }
 
     public Kind kind() {

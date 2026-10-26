@@ -23,7 +23,7 @@ WhitewaterClient client = WhitewaterClient.builder()
 |---|---|
 | `client` (direct) | WCL (`POST /v1/admin/wcl`), typed commands (`POST /v1/admin/commands`), cluster health — plus typed resource methods (`createDomain`, `createFeed`, `createWriter`, `createReader`, `createSubscription`, `describeFeed`, `renameFeed`, `dropFeed`, `listFeeds`, `seekReader`, `openWriterSession`, …) that build the same WCL for you |
 | `client.commands(Commands.of()…)` | The typed-command vocabulary as a validated fluent builder — Domains, Feeds, Writers, Readers, Subscriptions (feed or Domain source, delivery delay, retry budget), Roles, grants/revocations, API keys, Indexes (`define_index`/`rebuild`/`get_index`), StateStores, Pipes (forward/enrich/window, pause/resume), storage-Node registration/drain/retire/capacity |
-| `ReaderStart` | Reader/Subscription start positions: `beginning()`, `now()`, `cursor(c)`, `timestampNs(ns)` |
+| `ReaderStart` | Reader/Subscription start positions: `Beginning`, `End`, `beginning()`, `now()`, `cursor(c)`, `timestamp(instant)`, `timestampNs(ns)` — `import static dev.whitewater.model.ReaderStart.*` makes `Beginning`/`End` bare |
 | `client.writer(name)` | **Session-bound Writer**: opens `OPEN WRITER SESSION` internally; `append(key, payload)` auto request IDs + epoch, `reopen()` after `StaleSession` |
 | `client.reader(name, capacity)` | **Session-bound Reader**: opens internally; `fetch(limit)` tracks the delivered Cursor so `ack()` commits the right frontier; `close()` releases the fence |
 | `client.member(sub)` | **Session-bound member**: joins internally; `claim() → fetch → ack → release → transfer(work, peer)` with no epoch threading |
@@ -31,6 +31,9 @@ WhitewaterClient client = WhitewaterClient.builder()
 | `client.seekSubscription(name, position, ts, cursor)` | Operator reposition of a Subscription's shared frontier — refused while a member work lease is active |
 | `client.subscriptionMemberState(name)` | Authoritative member state: ownership epoch, per-member epochs, live leases |
 | `client.queryIndex(name, predicate)` | `exact` / `prefix` / `range` reads against an activated Index generation, with applied-vs-target freshness evidence |
+| `client.domain(name)` / `client.getDomain(name)` | **Typed Domain facade**: `domain` is a lazy handle; `getDomain` verifies + materializes the Domain's catalog view in one batched read — `feeds()`/`feedNames()`, `readers()`, `writers()`, `subscriptions()`, `pipes()`, `indexes()`, `stateStores()`, `describe()`, `historyPolicy()`, `refresh()`. `domain.feed("orders")` resolves `shop.orders` with zero I/O |
+| `client.createReader(domain, feed)` | **Fluent durable Reader**: `.readerId("fulfillment")` (the Kafka groupId analogue) → `.readerStartPoint(Beginning)` → `.capacity(n)` → `.open()` returning a codec-bound `FeedReader<K,V>` |
+| `client.createWriter(domain, feed)` | **Fluent durable Writer**: `.writerId("orders.ingest")` → `.open()` returning a codec-bound `FeedWriter<K,V>` |
 | `client.feed(name[, type/codec])` | **Typed feed facade**: binds `Codec`s once so keys/payloads serialize automatically in both directions — `feed.writer(name)` (declares + opens a session), `feed.reader(name, capacity)` (decoded `fetch`/`ack`), `feed.fetch`/`records`/`load` (decoded ad-hoc reads), `feed.subscribe` (decoded batches). Same codec vocabulary as `stateStore`: `String`/`byte[]`/`JsonNode`/Jackson classes out of the box, protobuf/Avro/custom via `dev.whitewater.codec`/`Codecs.of` |
 | `client.feeds()` | Raw-byte ad-hoc Feed operations: committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends, `load(feed, start, sink)` one-shot history reads — the escape hatch under `client.feed(...)` |
 | `client.subscribe(reader, feed, start, onRecords)` | Managed durable consume: provisions the Reader, runs open → fetch → deliver → ack on a background thread; `Subscription.close()` to stop |
@@ -65,6 +68,45 @@ try (var reader = orders.reader("audit", 64)) {
 StateStore<String, Order> latest = client.stateStore("demo.orders_latest", Order.class);
 latest.put("order-1", order);                            // same codec seam
 ```
+
+## Domains — the strongly-typed front door
+
+A Domain owns every Feed it prefixes (`shop` owns `shop.orders`), so the
+friendliest surface starts at the Domain and navigates down — the Kafka
+`groupId` + `auto.offset.reset` pairing maps to `readerId` +
+`readerStartPoint`:
+
+```java
+import static dev.whitewater.model.ReaderStart.*;   // Beginning, End
+
+Domain shop = client.getDomain("shop");             // verifies + materializes now
+shop.feedNames();                                 // [shop.orders, shop.returns]
+shop.getFeeds("order");                           // prefix-filtered Feed handles
+shop.readers(); shop.writers(); shop.subscriptions();
+
+try (var reader = client.createReader(shop, shop.getFeed("orders"))
+        .readerId("fulfillment")                    // durable consume identity
+        .readerStartPoint(Beginning)                // first-time start position
+        .capacity(256)
+        .open()) {
+    for (var page = reader.fetch(); !page.records().isEmpty(); page = reader.fetch()) {
+        page.records().forEach(m -> handle(m));
+        reader.ack();
+    }
+}
+
+var writer = client.createWriter(shop, shop.getFeed("orders"))
+        .writerId("orders.ingest")
+        .open();
+```
+
+`readerStartPoint` applies when the Reader is *first declared* — an
+existing `readerId` resumes its acknowledged frontier, exactly like
+`auto.offset.reset` on a committed Kafka group. `domain.feed("orders")`
+and `domain.getFeed("orders")` resolve `shop.orders` with no I/O; the
+first catalog accessor loads the whole Domain view in one batched
+control read and `refresh()` re-pulls it. `client.domain(name)` is the
+lazy variant for code paths that only compose names.
 
 ## Permanent consumers — the Kafka loop, minus the plumbing
 
