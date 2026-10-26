@@ -7,6 +7,8 @@ Java SDK for Whitewater Riverbeds. Implements the versioned
 Requires Java 17+. The only runtime dependency is Jackson Databind; HTTP
 uses `java.net.http` — no framework required.
 
+A complete microservice walkthrough — provision, produce, pump-process, dead-letter, shutdown — lives in [`docs/demo-service.md`](docs/demo-service.md).
+
 ## Clients
 
 ```java
