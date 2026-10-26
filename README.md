@@ -86,11 +86,17 @@ shop.feedNames();                                 // [shop.orders, shop.returns]
 shop.getFeeds("order");                           // prefix-filtered Feed handles
 shop.readers(); shop.writers(); shop.subscriptions();
 
-try (var reader = client.createReader(shop, shop.getFeed("orders"))
+// Everything a service needs hangs off the Domain:
+var writer = shop.createWriter("orders")
+        .writerId("ingest")
+        .open();
+try (var reader = shop.createReader("orders")
         .readerId("fulfillment")                    // durable consume identity
         .readerStartPoint(Beginning)                // first-time start position
         .capacity(256)
         .open()) {
+    reader.forEach(m -> handle(m));                 // per-record, ack after each page
+    // or stay manual: fetch() → handle records → ack()
     for (var page = reader.fetch(); !page.records().isEmpty(); page = reader.fetch()) {
         page.records().forEach(m -> handle(m));
         reader.ack();
@@ -255,11 +261,11 @@ explicit escape hatches for the same wire contract.
 | Area | API |
 |---|---|
 | Client & transport | `WhitewaterClient.builder().apiKey(..).endpoints(..).timeout(..)` · `healthy()` `health()` `checkCompatible()` · `close()` |
-| Typed Domains | `domain(name)` lazy / `getDomain(name)` eager · `feeds()` `getFeeds(prefix)` `feedNames()` · `feed(..)`/`getFeed(..)` typed handles · `createFeed(relative)` declares inside the Domain · `readers()` `writers()` `subscriptions()` `pipes()` `indexes()` `stateStores()` · `describe()` `historyPolicy()` `domainId()` `revision()` · `refresh()` |
+| Typed Domains | `domain(name)` lazy / `getDomain(name)` eager · `feeds()` `getFeeds(prefix)` `feedNames()` · `feed(..)`/`getFeed(..)` handles · `createFeed(relative)` `createReader(relative)` `createWriter(relative)` — declare/open inside the Domain · `readers()` `writers()` `subscriptions()` `pipes()` `indexes()` `stateStores()` · `describe()` `historyPolicy()` `domainId()` `revision()` · `refresh()` |
 | Schemas | `setDomainSchema` `setFeedSchema` `clearDomainSchema` `clearFeedSchema` · `Domain.schema()` `feedSchema()` `declaredFeedSchema()` · `SchemaDecl`/`FeedSchema` — `json`, `jsonschema`, `avro`, `protobuf`, `text`, `bytes`, `custom.<name>` |
 | Feeds | `feed(name[, keyType/Codec, valueType/Codec])` → `Feed<K,V>` · `useCompression()` · `records()` `fetch(..)` · `writer(..)` `append(..)` `reader(..)` `subscribe(..)` `consumer(..)` |
 | Writing | `FeedWriter.append(k, v)` / `append(k, v, metadata)` / `append(FeedEvent)` (event time + Metadata) · `appendBatch`/`appendAll` · `appendAsync` · `reopen()` `sessionEpoch()` `useCompression()` · idempotent `request_id` |
-| Reading | `FeedReader.fetch([limit])` `ack()` `ack(cursor)` `acknowledgedCursor()` `close()` · durable `readerId` · `ReaderStart` — `Beginning`, `End`, `Now`, `cursor`, `timestamp(Instant)` |
+| Reading | `FeedReader.forEach(handler)` per-record pump · `forEachWhile` early-stop · `fetch([limit])` `ack()` `ack(cursor)` `acknowledgedCursor()` `close()` · durable `readerId` · `ReaderStart` — `Beginning`, `End`, `Now`, `cursor`, `timestamp(Instant)` |
 | Temporary fetches | `Feed.fetch(after, limit)` / `feeds().temporaryFetch(feed, options)` — `after_event_time_ns` seeks, `new_only`, `tail` + `wait_ms` long-poll · `feeds().load(feed, start, sink)` |
 | Consumers | `feed.consumer(reader)` → `FeedConsumer`: `startAt(..)` `capacity(..)` `onRecord(..)` `onError(..)` `backoff(..)` `runAsync()` `lastError()` `close()` |
 | Subscription members | `member(name)` → `Member`: `claim([workId, leaseTicks])` `renew` `release` `transfer` `fetch(work, limit)` `ack(work, page)` — shared progress + RF3 work leases · `feed.subscribe(..)` managed loop · `seekSubscription` `subscriptionMemberState` |

@@ -160,6 +160,63 @@ class DomainTest {
     }
 
     @Test
+    void domainHangingBuildersComposeAndOpen() {
+        shopCatalog();
+        var shop = client.getDomain("shop");
+
+        // shop.createWriter / shop.createReader resolve relative names —
+        // the whole service shape hangs off the Domain.
+        var writer = shop.createWriter("orders").writerId("shop.w1").open();
+        writer.append("order-1", "{\"total\":5}".getBytes());
+
+        try (var reader = shop.createReader("orders")
+                .readerId("shop.r1")
+                .readerStartPoint(Beginning)
+                .open()) {
+            assertEquals("order-1", reader.fetch().records().get(0).key());
+        }
+        assertTrue(client.getDomain("shop").writers().contains("shop.w1"));
+        assertTrue(client.getDomain("shop").readers().contains("shop.r1"));
+    }
+
+    @Test
+    void domainCreateReaderRefusesAForeignFeed() {
+        var shop = client.domain("shop");
+        var other = client.feed("other.metrics");
+        assertThrows(IllegalArgumentException.class, () -> shop.createReader(other));
+        assertThrows(IllegalArgumentException.class, () -> shop.createWriter(other));
+    }
+
+    @Test
+    void readerForEachDeliversRecordsAndAcksPages() {
+        shopCatalog();
+        var shop = client.getDomain("shop");
+        var writer = shop.createWriter("orders").writerId("shop.w2").open();
+        writer.append("order-1", "1".getBytes());
+        writer.append("order-2", "2".getBytes());
+
+        // capacity(1) → one record per page: page 1 delivers + acks,
+        // the handler stops on page 2 before it is acked.
+        var reader = shop.createReader("orders")
+                .readerId("shop.pump")
+                .readerStartPoint(Beginning)
+                .capacity(1)
+                .open();
+        var seen = new java.util.ArrayList<String>();
+        reader.forEachWhile(m -> {
+            seen.add(m.key());
+            return seen.size() < 2;
+        });
+        assertEquals(List.of("order-1", "order-2"), seen);
+        assertNotNull(reader.acknowledgedCursor());     // page 1 committed
+
+        // The unacked tail replays on the next open.
+        try (var again = shop.createReader("orders").readerId("shop.pump").open()) {
+            assertEquals("order-2", again.fetch().records().get(0).key());
+        }
+    }
+
+    @Test
     void writerBuilderDeclaresAndOpensATypedWriter() {
         shopCatalog();
         var shop = client.getDomain("shop");

@@ -170,21 +170,55 @@ public final class Domain {
     // ---- Feed handles ---------------------------------------------------------
 
     /**
+     * {@code CREATE FEED} inside this Domain: {@code shop.createFeed("orders")}
+     * declares {@code shop.orders}. The next {@link #refresh()} (or a
+     * lazy accessor's first load) sees the new Feed in {@link #feeds()}.
+     */
+    public ControlExecution createFeed(String relative) {
+        return client.createFeed(resolve(relative));
+    }
+
+    /**
+     * Fluent declaration + session-open of a durable named Reader on a
+     * Feed inside this Domain — {@code shop.createReader("orders")}
+     * binds {@code shop.orders}:
+     * <pre>{@code
+     * var reader = shop.createReader("orders")
+     *         .readerId("fulfillment")          // the Kafka groupId analogue
+     *         .readerStartPoint(ReaderStart.Beginning)
+     *         .open();
+     * }</pre>
+     */
+    public ReaderBuilder<String, byte[]> createReader(String relative) {
+        return client.createReader(this, feed(relative));
+    }
+
+    /** {@link #createReader(String)} on an explicit typed handle. */
+    public <K, V> ReaderBuilder<K, V> createReader(Feed<K, V> feed) {
+        return client.createReader(this, feed);
+    }
+
+    /**
+     * Fluent declaration + session-open of a durable named Writer on a
+     * Feed inside this Domain — {@code shop.createWriter("orders")}
+     * binds {@code shop.orders}.
+     */
+    public WriterBuilder<String, byte[]> createWriter(String relative) {
+        return client.createWriter(this, feed(relative));
+    }
+
+    /** {@link #createWriter(String)} on an explicit typed handle. */
+    public <K, V> WriterBuilder<K, V> createWriter(Feed<K, V> feed) {
+        return client.createWriter(this, feed);
+    }
+
+    /**
      * A typed {@link Feed} handle on {@code relative} inside this
      * Domain: {@code shop.feed("orders")} binds {@code shop.orders}.
      * Passing an already-qualified name ({@code "shop.orders"}) is
      * accepted; a name outside this Domain is refused locally. Pure
      * name composition — no I/O.
      */
-    /**
-     * {@code CREATE FEED} inside this Domain: {@code shop.createFeed("orders")}
-     * declares {@code shop.orders}. The next {@link #refresh()} (or a
-     * lazier accessor's first load) sees the new Feed in {@link #feeds()}.
-     */
-    public ControlExecution createFeed(String relative) {
-        return client.createFeed(resolve(relative));
-    }
-
     public Feed<String, byte[]> feed(String relative) {
         return feed(relative, Codecs.utf8(), Codecs.bytes());
     }

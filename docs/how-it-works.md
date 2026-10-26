@@ -173,13 +173,13 @@ session with the Feed's codecs bound:
 ```java
 import static dev.whitewater.model.ReaderStart.*;   // Beginning, End
 
-try (var reader = client.createReader(shop, shop.getFeed("orders"))
+try (var reader = shop.createReader("orders")     // = client.createReader(shop, …)
         .readerId("fulfillment")         // durable consume identity — Kafka groupId
         .readerStartPoint(Beginning)     // first-time start — auto.offset.reset
         .capacity(256)
         .open()) {                        // FeedReader<String, byte[]>
-    var page = reader.fetch();
-    reader.ack();
+    reader.forEach(m -> handle(m));      // per-record pump: deliver → ack each page
+    // or stay manual: fetch() → handle → ack()
 }
 ```
 
@@ -189,11 +189,16 @@ try (var reader = client.createReader(shop, shop.getFeed("orders"))
   (oldest retained), `End` (new records only), `cursor(c)`, or
   `timestamp(Instant)` — the same mapping Kafka's
   `auto.offset.reset=earliest|latest` gives a fresh group.
+- `reader.forEach(handler)` pumps records one at a time and acks each
+  fetched page after its records are handled; `forEachWhile` stops on a
+  `false` return leaving the in-flight page unacked so its tail replays.
+  `close()` from another thread ends the pump; the loop paces empty
+  fetches on the server's `retry_after_ms`.
 - `capacity` bounds each `fetch` page (default 128).
 - `.declare()` creates the catalog row without opening a session —
   useful for provisioning ahead of consumers.
 - The same shape exists for producers:
-  `client.createWriter(shop, feed).writerId("orders.ingest").open()`
+  `shop.createWriter("orders").writerId("orders.ingest").open()`
   returns a `FeedWriter<K,V>`.
 
 `domain.feed(...)` handles are codec-compatible `Feed<K,V>` facades —
