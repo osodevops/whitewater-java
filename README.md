@@ -130,7 +130,7 @@ client.clearFeedSchema("shop.orders");   // reverts to inheritance
 `SET SCHEMA ON DOMAIN|FEED <name> (KEY|VALUE <format> [SUBJECT 'x']
 [DEFINITION 'y'])+` in WCL does the same; `SHOW SCHEMAS` lists declared
 assignments and `DESCRIBE FEED` shows `schema` + `effective_schema`.
-Formats today: `text`, `json`, `protobuf`, `avro`, `custom.<name>` —
+Formats today: `json`, `jsonschema`, `avro`, `protobuf`, `text`, `bytes`, or `custom.<name>` —
 compatibility enforcement is still a no-op, so treat declarations as
 documentation/tooling metadata until the registry contract lands.
 
