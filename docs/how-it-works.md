@@ -162,7 +162,15 @@ shop.refresh();             // re-pull the snapshot
 
 `domain.feed("orders")` / `domain.getFeed("orders")` resolve
 `shop.orders` — pure name composition, zero I/O, codecs bindable exactly
-like `client.feed(...)`.
+like `client.feed(...)`. Deeper relative names work the same way:
+`shop.feed("orders.hourly")` binds `shop.orders.hourly`. The same
+composition applies to the other resources — `shop.pipe("orders.relay")`
+binds the Pipe `shop.orders.relay`, `shop.stateStore("customers")` the
+StateStore `shop.customers`, and `shop.resolve("orders.hourly")` →
+`shop.orders.hourly` composes the wire name anywhere a full name is
+asked for (`Commands.of()`, `client.pipe(...)`, the store `Class`/`Codec`
+overloads). A relative name is always interpreted inside the Domain; a
+name that fails the dotted grammar is refused locally.
 
 ### Fluent Readers and Writers
 
@@ -205,6 +213,13 @@ try (var reader = shop.createReader("orders")     // = client.createReader(shop,
 
 `domain.feed(...)` handles are codec-compatible `Feed<K,V>` facades —
 typed reads come back as `FeedMessage<K,V>` with decoded keys/values.
+`feed(name)` defaults to `Feed<String, String>` — UTF-8 both ways, so
+`writer.append("order-1", "{\"total\":42}")` passes a String and
+`m.value()` decodes one (the SDK owns the byte conversion; plain JSON
+needs no schema binding). `feed(name, byte[].class)` opts into raw
+binary; any other `Class`/`Codec` binds schema or custom serialization.
+`client.stateStore(name)` defaults to `StateStore<String, String>` the
+same way.
 
 ## Reading
 

@@ -21,6 +21,34 @@ var client = WhitewaterClient.builder()
         .build();
 ```
 
+## Names live inside Domains
+
+Every name in this guide is a dotted name scoped to a **Domain**:
+`ops.orders.hourly` is `orders.hourly` inside Domain `ops`. The
+Domain handle composes names for you — `ops.resolve(relative)`
+produces the full wire name `Commands.of()` asks for, while
+`ops.feed(...)`, `ops.pipe(...)`, and `ops.stateStore(...)` bind typed
+handles directly:
+
+```java
+var ops = client.getDomain("ops");
+
+ops.resolve("orders.hourly");           // "ops.orders.hourly"
+var hourly = ops.feed("orders.hourly"); // Feed<String,String> on ops.orders.hourly
+var relay  = ops.pipe("orders.relay");  // lifecycle handle on the pipe
+var custs  = ops.stateStore("customers"); // StateStore<String,String>
+
+ops.createFeed("orders");               // CREATE FEED ops.orders
+ops.createFeed("orders.relayed");       // CREATE FEED ops.orders.relayed
+```
+
+Deeper relative names compose segment by segment —
+`ops.feed("orders.hourly")` is the Feed `ops.orders.hourly`, not a
+flat string. Anything that fails the dotted grammar or escapes the
+Domain is refused locally, before the wire. The examples below use
+`ops.resolve(...)` wherever a command needs a name; writing the full
+dotted name out literally is equivalent.
+
 ## 1. Prerequisites: subscriptions and stores
 
 Every Pipe names a **Subscription** — the durable delivery lease it pulls
@@ -32,7 +60,8 @@ import dev.whitewater.admin.Commands;
 import dev.whitewater.model.ReaderStart;
 
 client.commands(Commands.of()
-        .createSubscription("orders.sub", "ops.orders", ReaderStart.beginning()));
+        .createSubscription("orders.sub", ops.feed("orders").name(),
+                ReaderStart.beginning()));
 ```
 
 A Subscription can also cover a whole Domain (every Feed in it, present
@@ -40,7 +69,7 @@ and future):
 
 ```java
 client.commands(Commands.of()
-        .createDomainSubscription("ops.sub", "ops", ReaderStart.beginning()));
+        .createDomainSubscription("ops.sub", ops.name(), ReaderStart.beginning()));
 ```
 
 `enrich` and `window` pipes write to or read from a **StateStore**. Declare
@@ -50,10 +79,10 @@ one up front (manual or feed-sourced — see `docs/stores.md`):
 import dev.whitewater.model.Extractor;
 import dev.whitewater.model.StateStoreSpec;
 
-var spec = StateStoreSpec.named("ops.customers")
+var spec = StateStoreSpec.named(ops.resolve("customers"))
         .addKey("email", true, Extractor.json("$.email"))
         .addKey("tier", false, Extractor.json("$.tier"));
-client.stateStores().define(spec, "ops.customer.changes"); // feed-sourced
+client.stateStores().define(spec, ops.resolve("customer.changes")); // feed-sourced
 ```
 
 ## 2. Forward pipes
@@ -65,9 +94,9 @@ output side; the durable frontier advances on the Subscription.
 ```java
 client.commands(Commands.of()
         .defineForwardPipe(
-                "ops.orders.relay",      // pipe name (dotted resource name)
-                "orders.sub",            // source subscription
-                "ops.orders.relayed"));  // output feed
+                ops.resolve("orders.relay"),   // pipe name — ops.orders.relay
+                "orders.sub",                  // source subscription
+                ops.resolve("orders.relayed"))); // output feed
 ```
 
 ## 3. Enrich pipes
@@ -82,16 +111,16 @@ journal — replayed outputs are byte-identical.
 import dev.whitewater.model.PipeOperation;
 
 client.commands(Commands.of().defineEnrichPipe(
-        "ops.orders.enrich",
+        ops.resolve("orders.enrich"),   // ops.orders.enrich
         "orders.sub",
-        "ops.enriched",       // output feed
-        "ops.customers",                  // lookup store
+        ops.resolve("enriched"),        // output feed
+        ops.resolve("customers"),       // lookup store
         PipeOperation.enrich(
                 Extractor.json("$.customerId"),   // project record -> store key
                 EnrichFreshness.LATEST,           // LATEST or STRICT
                 "email",                          // named key to hit (null = primary)
                 EnrichMiss.FORWARD),              // or QUARANTINE
-        "ops.enrich.misses"));              // quarantine feed (required if QUARANTINE)
+        ops.resolve("enrich.misses")));   // quarantine feed (required if QUARANTINE)
 ```
 
 - `Extractor` — `recordKey()`, `metadata(name)`, or `json(field)`
@@ -119,13 +148,13 @@ import dev.whitewater.model.NamedKey;
 
 client.commands(Commands.of()
         // Pane view: 'key' and 'pane' are required, non-unique.
-        .defineStateStore("ops.order.counts", null, List.of(
+        .defineStateStore(ops.resolve("order.counts"), null, List.of(
                 new NamedKey("key", false),
                 new NamedKey("pane", false)))
         .defineWindowPipe(
-        "ops.orders.hourly",
+        ops.resolve("orders.hourly"),     // the pipe — ops.orders.hourly
         "orders.sub",
-        "ops.order.counts",               // output store (declared above)
+        ops.resolve("order.counts"),      // output store (declared above)
         PipeOperation.window(
                 Time.h(1),                             // 1h panes
                 Extractor.json("$.region"),            // window key
@@ -135,7 +164,7 @@ client.commands(Commands.of()
                 Time.d(1),                             // expire: keep panes 24h
                 10_000L,                               // keyLimit
                 null),                                 // byteLimit
-        "ops.hourly.emits"));              // emit feed (optional)
+        ops.resolve("hourly.emits")));   // emit feed (optional)
 ```
 
 Every duration a pipe declares is a `Time` — `Time.h`, `Time.m`,
@@ -183,7 +212,7 @@ WindowAggregation.average(Extractor.json("$.rtt")) // running mean
 ## 5. Lifecycle
 
 ```java
-var pipe = client.pipe("ops.orders.relay");
+var pipe = ops.pipe("orders.relay");      // = client.pipe("ops.orders.relay")
 
 PipeInfo info = pipe.describe();  // stage, operation, outputs, status
 pipe.pause();                     // cooperative: in-flight effects finish

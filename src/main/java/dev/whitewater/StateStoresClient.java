@@ -32,8 +32,8 @@ public final class StateStoresClient {
      * each declare an {@link Extractor} so replay can project typed
      * values; extractors on a manual store are refused.
      */
-    public StateStore<String, byte[]> define(StateStoreSpec spec, String source) {
-        return define(spec, source, (Codec<String>) null, (Codec<byte[]>) null);
+    public StateStore<String, String> define(StateStoreSpec spec, String source) {
+        return define(spec, source, (Codec<String>) null, (Codec<String>) null);
     }
 
     /**
@@ -95,7 +95,7 @@ public final class StateStoresClient {
         @SuppressWarnings("unchecked")
         Codec<K> keys = keyCodec != null ? keyCodec : (Codec<K>) dev.whitewater.model.Codecs.utf8();
         @SuppressWarnings("unchecked")
-        Codec<V> values = payloadCodec != null ? payloadCodec : (Codec<V>) dev.whitewater.model.Codecs.bytes();
+        Codec<V> values = payloadCodec != null ? payloadCodec : (Codec<V>) dev.whitewater.model.Codecs.utf8();
         return StateStore.bound(transport, spec.name(), keys, values);
     }
 

@@ -46,7 +46,7 @@ import java.util.function.Consumer;
  * }</pre>
  *
  * <p>{@link WhitewaterClient#stateStore(String)} binds String keys with
- * raw {@code byte[]} payloads; pass a payload {@link Codec} (or key +
+ * UTF-8 {@code String} payloads; pass a payload {@link Codec} (or key +
  * payload Codecs) for objects. Named-key values are typed —
  * {@link String}, whole {@link Number}s/{@link java.math.BigInteger},
  * {@link Boolean}, {@code byte[]}, or null; a {@link List} value carries
@@ -391,8 +391,8 @@ public final class StateStore<K, V> {
         return new StoreRows<>(List.copyOf(mapped), rows.freshness());
     }
 
-    /** The default binding: String keys, raw byte[] payloads. */
-    static StateStore<String, byte[]> defaults(Transport transport, String name) {
-        return bound(transport, name, Codecs.utf8(), Codecs.bytes());
+    /** The default binding: String keys, UTF-8 String payloads. */
+    static StateStore<String, String> defaults(Transport transport, String name) {
+        return bound(transport, name, Codecs.utf8(), Codecs.utf8());
     }
 }

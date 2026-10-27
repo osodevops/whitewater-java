@@ -100,6 +100,28 @@ class DomainTest {
     }
 
     @Test
+    void resolveComposesAnyResourceNameInsideTheDomain() {
+        var shop = client.domain("shop");
+
+        assertEquals("shop.orders.hourly", shop.resolve("orders.hourly"));
+        assertEquals("shop.orders.hourly", shop.resolve("shop.orders.hourly"));
+        assertThrows(IllegalArgumentException.class, () -> shop.resolve("BAD.NAME"));
+        // pipe/stateStore bind the same way — handles carry the full name
+        assertEquals("shop.orders.relay", shop.pipe("orders.relay").name());
+        assertEquals("shop.customers", shop.stateStore("customers").name());
+    }
+
+    @Test
+    void stateStoreDefaultsToUtf8Strings() {
+        var shop = client.domain("shop");
+
+        // client.stateStore defaults match feed() — Strings in, Strings out;
+        // byte[] is the explicit opt-in via stateStore(name, byte[].class)
+        assertEquals("shop.customers", shop.stateStore("customers").name());
+        assertEquals("app.users", client.stateStore("app.users").name());
+    }
+
+    @Test
     void getDomainRefusesAnUndeclaredDomain() {
         var ex = assertThrows(WhitewaterException.Refused.class,
                 () -> client.getDomain("missing"));

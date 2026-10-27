@@ -253,13 +253,38 @@ public final class Domain {
     }
 
     /**
-     * Resolve {@code relative} to a full dotted Feed name inside this
-     * Domain — accepts either the short form ({@code "orders"}) or the
-     * already-qualified form ({@code "shop.orders"}). Every result lives
-     * under the Domain's prefix by construction; a name that fails the
-     * dotted grammar is refused here, locally.
+     * A lifecycle handle on the Pipe {@code relative} inside this
+     * Domain — {@code ops.pipe("orders.relay")} binds
+     * {@code ops.orders.relay}. {@link #resolve(String)} composes the
+     * same name for {@code Commands.of()} calls that take full dotted
+     * names.
      */
-    String resolve(String relative) {
+    public Pipe pipe(String relative) {
+        return client.pipe(resolve(relative));
+    }
+
+    /**
+     * A codec-bound {@link StateStore} facade on {@code relative}
+     * inside this Domain — {@code ops.stateStore("customers")} binds
+     * {@code ops.customers} with the same default codecs as
+     * {@link WhitewaterClient#stateStore(String)}. Pass the full form
+     * for typed payloads:
+     * {@code client.stateStore(ops.resolve("customers"), Employee.class)}.
+     */
+    public StateStore<String, String> stateStore(String relative) {
+        return client.stateStore(resolve(relative));
+    }
+
+    /**
+     * Resolve {@code relative} to a full dotted resource name inside
+     * this Domain — accepts either the short form ({@code "orders"})
+     * or the already-qualified form ({@code "shop.orders"}). Deeper
+     * names compose the same way: {@code ops.resolve("orders.hourly")}
+     * → {@code ops.orders.hourly}. Every result lives under the
+     * Domain's prefix by construction; a name that fails the dotted
+     * grammar is refused here, locally.
+     */
+    public String resolve(String relative) {
         Objects.requireNonNull(relative, "feed name is required");
         var full = relative.startsWith(name + ".") ? relative : name + "." + relative;
         return WhitewaterClient.dottedName(full);

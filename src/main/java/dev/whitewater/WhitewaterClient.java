@@ -810,8 +810,10 @@ public final class WhitewaterClient implements AutoCloseable {
     /**
      * A typed facade over the node-side StateStore {@code name} — rows
      * live on the Nodes (RF3 + Fjall); this client holds no state. The
-     * default binding takes String keys and {@code byte[]} payloads;
-     * the overloads bind {@link dev.whitewater.model.Codec}s so the SDK
+     * default binding takes String keys and UTF-8 {@code String}
+     * payloads — plain JSON flows with no codec ceremony;
+     * {@code stateStore(name, byte[].class)} opts into raw binary. The
+     * overloads bind {@link dev.whitewater.model.Codec}s so the SDK
      * serializes keys/payloads for you:
      * <pre>{@code
      * StateStore<String, User> users =
@@ -820,7 +822,7 @@ public final class WhitewaterClient implements AutoCloseable {
      * User back = users.get("user-1").payload();   // no getBytes anywhere
      * }</pre>
      */
-    public StateStore<String, byte[]> stateStore(String name) {
+    public StateStore<String, String> stateStore(String name) {
         return StateStore.defaults(transport, name);
     }
 

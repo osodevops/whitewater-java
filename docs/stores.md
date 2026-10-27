@@ -24,15 +24,22 @@ Adding a key to an existing store has no effect server-side.
 
 The store carries raw bytes on the wire; `Codec`s decide what your
 application sees. `client.stateStore(name)` defaults to String keys and
-`byte[]` payloads — pass Codecs for anything richer:
+UTF-8 `String` payloads — plain JSON and text flow with no codec
+ceremony, and the SDK owns the UTF-8 conversion. Raw `byte[]` is the
+explicit opt-in for binary data:
 
 ```java
-// String keys, raw byte[] payloads (the default):
-StateStore<String, byte[]> raw = client.stateStore("accounts.employees");
+// String keys, UTF-8 String payloads (the default):
+StateStore<String, String> store = client.stateStore("accounts.employees");
+store.put("emp-1", "{\"name\":\"alice\"}", null);   // JSON stays a String
 
-// Just the class — String is UTF-8, other classes Jackson-map:
-StateStore<String, String> text = client.stateStore("accounts.employees", String.class);
-StateStore<String, Employee> store = client.stateStore("accounts.employees", Employee.class);
+// Raw binary — opt in explicitly:
+StateStore<String, byte[]> raw =
+        client.stateStore("accounts.employees", byte[].class);
+
+// Just the class — other classes Jackson-map:
+StateStore<String, Employee> typed =
+        client.stateStore("accounts.employees", Employee.class);
 
 // Key class too — object keys work the same way:
 StateStore<UserKey, Employee> keyed =
@@ -47,6 +54,18 @@ StateStore<String, User> avro =
 // Anything else — explicit Codecs:
 StateStore<String, User> custom =
         client.stateStore("accounts.employees", Codecs.of(User::toByteArray, b -> User.parseFrom(b)));
+```
+
+Stores live inside Domains like Feeds do: `ops.stateStore("employees")`
+binds `ops.employees` with the same default codecs, and
+`ops.resolve("employees")` composes the full name for `Commands.of()`
+or the `Class`/`Codec` overloads:
+
+```java
+var ops = client.getDomain("ops");
+StateStore<String, String> employees = ops.stateStore("employees");
+StateStore<String, Employee> typedEmployees =
+        client.stateStore(ops.resolve("employees"), Employee.class);
 ```
 
 `Codecs` ships `utf8()`, `bytes()`, `json(Class)`/`json(TypeReference)`,
