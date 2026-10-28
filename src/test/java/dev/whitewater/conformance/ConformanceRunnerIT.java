@@ -35,6 +35,10 @@ import static org.junit.jupiter.api.DynamicTest.dynamicTest;
  *   mvn verify
  */
 class ConformanceRunnerIT {
+    /** Transport errors and 5xx ride this separate budget, never a poll attempt. */
+    private static final int TRANSIENT_ATTEMPTS = 120;
+    private static final long TRANSIENT_INTERVAL_MS = 500;
+
 
     private static WhitewaterClient client;
     private static Path conformanceDir;
@@ -116,7 +120,7 @@ class ConformanceRunnerIT {
             JsonNode expect = step.path("expect");
             for (int attempt = 0; attempt < times; attempt++) {
                 try {
-                    lastResult = execute(op, args);
+                    lastResult = executeTransient(op, args);
                     lastStatus = 200;
                     lastError = null;
                 } catch (WhitewaterException e) {
@@ -144,6 +148,33 @@ class ConformanceRunnerIT {
             if (step.hasNonNull("bind")) {
                 bound.put(step.get("bind").asText(), Objects.requireNonNullElse(
                         lastResult, Transport.json().nullNode()));
+            }
+        }
+    }
+
+    /**
+     * One step dispatch plus its transient budget: transport failures and
+     * 5xx (surfaced as {@link WhitewaterException.Unavailable} /
+     * {@link WhitewaterException.AmbiguousResult}) retry on a separate
+     * budget — the same contract the Node/Python/Go runners carry — so a
+     * refused commit's "retry with the same append identity" rides out
+     * without spending a poll attempt. Identical args mean the server's
+     * dedup makes the retry safe.
+     */
+    private JsonNode executeTransient(String op, JsonNode args) throws Exception {
+        for (int transientAttempts = 0;; transientAttempts++) {
+            try {
+                return execute(op, args);
+            } catch (WhitewaterException.Unavailable | WhitewaterException.AmbiguousResult e) {
+                if (transientAttempts >= TRANSIENT_ATTEMPTS) {
+                    throw e;
+                }
+                try {
+                    Thread.sleep(TRANSIENT_INTERVAL_MS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
             }
         }
     }
