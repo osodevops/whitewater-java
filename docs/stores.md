@@ -8,12 +8,23 @@ and every operation is an HTTP call with freshness evidence.
 
 ## Declaring
 
+Stores live inside Domains like Feeds do — declare through the Domain
+handle and every name resolves inside it:
+
 ```java
-var spec = StateStoreSpec.named("accounts.employees")
+var accounts = client.createDomain("accounts");
+var spec = StateStoreSpec.named("employees")
         .addKey("passport", true)            // unique: one row per value
         .addKey("department", false);        // non-unique: value -> many rows
 
-client.stateStores().define(spec, null);     // manual store
+accounts.defineStateStore(spec, (String) null);   // manual store: accounts.employees
+```
+
+A feed-sourced store names its source Feed — relative in this Domain,
+or a `Feed` handle / `Scoped.absolute` across Domains:
+
+```java
+accounts.defineStateStore(spec, accounts.feed("events"));
 ```
 
 `addKey` records declaration intent used by `define` — named keys are
@@ -23,50 +34,43 @@ Adding a key to an existing store has no effect server-side.
 ## Binding a typed facade
 
 The store carries raw bytes on the wire; `Codec`s decide what your
-application sees. `client.stateStore(name)` defaults to String keys and
+application sees. `domain.stateStore(name)` defaults to String keys and
 UTF-8 `String` payloads — plain JSON and text flow with no codec
 ceremony, and the SDK owns the UTF-8 conversion. Raw `byte[]` is the
 explicit opt-in for binary data:
 
 ```java
 // String keys, UTF-8 String payloads (the default):
-StateStore<String, String> store = client.stateStore("accounts.employees");
+StateStore<String, String> store = accounts.stateStore("employees");
 store.put("emp-1", "{\"name\":\"alice\"}", null);   // JSON stays a String
 
 // Raw binary — opt in explicitly:
 StateStore<String, byte[]> raw =
-        client.stateStore("accounts.employees", byte[].class);
+        accounts.stateStore("employees", byte[].class);
 
 // Just the class — other classes Jackson-map:
 StateStore<String, Employee> typed =
-        client.stateStore("accounts.employees", Employee.class);
+        accounts.stateStore("employees", Employee.class);
 
 // Key class too — object keys work the same way:
 StateStore<UserKey, Employee> keyed =
-        client.stateStore("accounts.employees", UserKey.class, Employee.class);
+        accounts.stateStore("employees", UserKey.class, Employee.class);
 
 // Protobuf / Avro payloads — optional codec modules (see below):
 StateStore<String, User> proto =
-        client.stateStore("accounts.employees", ProtobufCodecs.of(User.class));
+        accounts.stateStore("employees", ProtobufCodecs.of(User.class));
 StateStore<String, User> avro =
-        client.stateStore("accounts.employees", AvroCodecs.specific(User.class));
+        accounts.stateStore("employees", AvroCodecs.specific(User.class));
 
 // Anything else — explicit Codecs:
 StateStore<String, User> custom =
-        client.stateStore("accounts.employees", Codecs.of(User::toByteArray, b -> User.parseFrom(b)));
+        accounts.stateStore("employees", Codecs.of(User::toByteArray, b -> User.parseFrom(b)));
 ```
 
-Stores live inside Domains like Feeds do: `ops.stateStore("employees")`
-binds `ops.employees` with the same default codecs, and
-`ops.resolve("employees")` composes the full name for `Commands.of()`
-or the `Class`/`Codec` overloads:
-
-```java
-var ops = client.getDomain("ops");
-StateStore<String, String> employees = ops.stateStore("employees");
-StateStore<String, Employee> typedEmployees =
-        client.stateStore(ops.resolve("employees"), Employee.class);
-```
+`accounts.stateStore("employees")` binds `accounts.employees`; a name
+already prefixed passes through verbatim. `accounts.resolve("employees")`
+composes the full name for `Commands.of()` or a `Scoped.absolute`
+reference.
 
 `Codecs` ships `utf8()`, `bytes()`, `json(Class)`/`json(TypeReference)`,
 `jsonTree()`, `of(encoder, decoder)` for anything else, and
@@ -177,7 +181,7 @@ key codec; feed it back into `page(...)`.
 store.clear();                            // one journaled ClearAll
 store.sync();                             // resume feed-derived replay
 store.rebuild();                          // re-materialize from retained history
-store.drop();                             // or client.stateStores().drop(name)
+store.drop();                             // or domain.dropStateStore(name)
 ```
 
 - `clear` empties the store as one durable, idempotent mutation;
@@ -185,7 +189,7 @@ store.drop();                             // or client.stateStores().drop(name)
 - `drop` tombstones the definition — the name cannot be recreated and
   every data path refuses. Rows already applied on replicas remain
   until a bounded reclaim pass.
-- Feed-sourced stores: `client.stateStores().define(spec, "accounts.events")`
+- Feed-sourced stores: `domain.defineStateStore(spec, domain.feed("events"))`
   materializes committed Feed history.
 
 ### Feed-sourced named keys
@@ -195,10 +199,10 @@ committed source record maps to typed lookup values. Every key carries
 an `Extractor`:
 
 ```java
-var spec = StateStoreSpec.named("accounts.tagged")
+var spec = StateStoreSpec.named("tagged")
         .addKey("passport", true, Extractor.metadata("pp"))
         .addKey("department", false, Extractor.json("dept"));
-client.stateStores().define(spec, "accounts.events");
+accounts.defineStateStore(spec, accounts.feed("events"));
 ```
 
 `Extractor.recordKey()` reads the record's key,

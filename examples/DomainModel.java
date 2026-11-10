@@ -32,16 +32,17 @@ public final class DomainModel {
                 .map(f -> f.name()).toList());
 
         // Fluent Writer on a codec-bound Feed — declares if missing,
-        // opens a session; the SDK serializes, never getBytes.
-        var writer = client.createWriter(shop, shop.feed("orders", String.class))
-                .writerId("shop.ingest")
+        // opens a session; the SDK serializes, never getBytes. Writer
+        // and Reader ids resolve inside the Domain ("ingest" → shop.ingest).
+        var writer = shop.createWriter(shop.feed("orders", String.class))
+                .writerId("ingest")
                 .open();
         writer.append("order-1", "{\"total\":42}");
 
         // Fluent Reader — readerId is the durable consume identity
         // (Kafka groupId), readerStartPoint the first-time offset.
-        try (var reader = client.createReader(shop, shop.feed("orders", String.class))
-                .readerId("shop.fulfillment")
+        try (var reader = shop.createReader(shop.feed("orders", String.class))
+                .readerId("fulfillment")
                 .readerStartPoint(Beginning)
                 .maxPageSize(64)
                 .open()) {

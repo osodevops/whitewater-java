@@ -36,18 +36,18 @@ public class ReadFeed {
                 .apiKey("whitewater-local-development-admin-key")
                 .build();
 
-        client.createDomain("demo");
-        client.createFeed("demo.orders");
+        var demo = client.createDomain("demo");
+        demo.createFeed("orders");
 
         // The same codec binding works for reads: fetched pages arrive
         // decoded — no payloadAs() calls in the loop.
-        Feed<String, Order> orders = client.feed("demo.orders", Order.class);
+        Feed<String, Order> orders = demo.feed("orders", Order.class);
 
         // Declares the Reader if missing (durable Control Plane state),
         // opens the session, and owns the fence. Another client opening
         // the same Reader supersedes this session (stale_epoch on the
         // next fetch).
-        try (FeedReader<String, Order> reader = orders.reader("demo.reader", 64)) {
+        try (FeedReader<String, Order> reader = orders.reader("reader", 64)) {
             while (true) {
                 // fetch() returns immediately with whatever is committed —
                 // a Reader is not a long-poll. For "sit and wait" behavior,

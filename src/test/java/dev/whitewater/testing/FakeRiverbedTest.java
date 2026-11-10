@@ -1,5 +1,6 @@
 package dev.whitewater.testing;
 
+import dev.whitewater.Domain;
 import dev.whitewater.Feed;
 import dev.whitewater.FeedReader;
 import dev.whitewater.FeedWriter;
@@ -46,8 +47,12 @@ class FakeRiverbedTest {
         riverbed.close();
     }
 
+    private Domain orders() {
+        return client.domain("orders");
+    }
+
     private Feed<String, String> feed() {
-        return client.feed("orders.events", String.class);
+        return orders().feed("events", String.class);
     }
 
     @Test
@@ -109,8 +114,8 @@ class FakeRiverbedTest {
 
     @Test
     void staleWriterEpochIsRefusedAndReopenHeals() {
-        Writer first = client.writer("orders.ingest");
-        Writer second = client.writer("orders.ingest");   // fences the first session
+        Writer first = orders().writer("ingest");
+        Writer second = orders().writer("ingest");        // fences the first session
 
         assertThrows(WhitewaterException.StaleSession.class,
                 () -> first.append("order-1", "payload-1"));
@@ -188,9 +193,10 @@ class FakeRiverbedTest {
 
     @Test
     void storeRoundTripsRowsAndDedupesMutations() {
-        client.stateStores().define(StateStoreSpec.named("accounts.employees")
-                .addKey("department"), null);
-        var store = client.stateStore("accounts.employees", String.class);
+        var accounts = client.domain("accounts");
+        accounts.defineStateStore(StateStoreSpec.named("employees")
+                .addKey("department"), (dev.whitewater.ScopedRef) null);
+        var store = accounts.stateStore("employees", String.class);
 
         UUID mutationId = UUID.randomUUID();
         var put = store.put("user-1", "profile-1", Map.of("department", "eng"), mutationId);
@@ -218,10 +224,10 @@ class FakeRiverbedTest {
 
     @Test
     void subscriptionMemberClaimsFetchesAndAcks() {
-        client.createSubscription("orders.audit", "orders.events");
+        orders().createSubscription("audit", "events");
         feed().writer("orders.ingest").append("order-1", "payload-1");
 
-        var member = client.member("orders.audit");
+        var member = orders().member("audit");
         var work = member.claim();
         var page = member.fetch(work, 64);
         assertEquals(1, page.records().size());

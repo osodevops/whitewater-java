@@ -230,6 +230,12 @@ class ConformanceRunnerIT {
         return toJson(activeClient.wcl(args.get("script").asText(), UUID.fromString(requestId)));
     }
 
+
+    private static dev.whitewater.Domain domainOf(WhitewaterClient c, String name) {
+        var domain = name.contains(".") ? name.substring(0, name.indexOf('.')) : name;
+        return c.domain(domain);
+    }
+
     private JsonNode executeCommands(JsonNode args) {
         var commands = new ArrayList<Map<String, Object>>();
         for (JsonNode command : args.get("commands")) {
@@ -239,7 +245,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeWriterAppend(JsonNode args) {
-        var writer = activeClient.writerSession(
+        var writer = domainOf(activeClient, args.get("writer").asText()).writerSession(
                 args.get("writer").asText(), args.path("session_epoch").asLong())
                 .useCompression(args.path("use_compression").asBoolean());
         var result = writer.append(new dev.whitewater.WriterSessionClient.Append(
@@ -264,7 +270,7 @@ class ConformanceRunnerIT {
                     record.hasNonNull("event_time_ns") ? record.get("event_time_ns").asLong() : null,
                     decodeMetadata(record.path("metadata"))));
         }
-        var writer = activeClient.writerSession(
+        var writer = domainOf(activeClient, records.get(0).get("writer").asText()).writerSession(
                 records.get(0).get("writer").asText(),
                 records.get(0).path("session_epoch").asLong())
                 .useCompression(args.path("use_compression").asBoolean());
@@ -276,7 +282,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeReaderOpen(JsonNode args) {
-        return toJson(activeClient.readerSession(args.get("reader").asText())
+        return toJson(domainOf(activeClient, args.get("reader").asText()).readerSession(args.get("reader").asText())
                 .open(args.path("capacity").asInt(64),
                         UUID.fromString(args.get("request_id").asText())));
     }
@@ -284,7 +290,7 @@ class ConformanceRunnerIT {
     private JsonNode executeReaderFetch(JsonNode args) {
         var session = new dev.whitewater.model.ReaderSession(
                 null, null, args.path("session_epoch").asLong(), 0, null, null);
-        return toJson(activeClient.readerSession(args.get("reader").asText())
+        return toJson(domainOf(activeClient, args.get("reader").asText()).readerSession(args.get("reader").asText())
                 .fetch(session, args.hasNonNull("limit") ? args.get("limit").asInt() : null,
                         UUID.fromString(args.get("request_id").asText())));
     }
@@ -292,7 +298,7 @@ class ConformanceRunnerIT {
     private JsonNode executeReaderAck(JsonNode args) {
         var session = new dev.whitewater.model.ReaderSession(
                 null, null, args.path("session_epoch").asLong(), 0, null, null);
-        return toJson(activeClient.readerSession(args.get("reader").asText())
+        return toJson(domainOf(activeClient, args.get("reader").asText()).readerSession(args.get("reader").asText())
                 .ack(session, new dev.whitewater.model.Cursor(args.get("cursor").asText()),
                         UUID.fromString(args.get("request_id").asText())));
     }
@@ -300,11 +306,11 @@ class ConformanceRunnerIT {
     private JsonNode executeReaderClose(JsonNode args) {
         var session = new dev.whitewater.model.ReaderSession(
                 null, null, args.path("session_epoch").asLong(), 0, null, null);
-        return toJson(activeClient.readerSession(args.get("reader").asText()).close(session));
+        return toJson(domainOf(activeClient, args.get("reader").asText()).readerSession(args.get("reader").asText()).close(session));
     }
 
     private JsonNode executeMemberJoin(JsonNode args) {
-        return toJson(activeClient.subscriptionMember(args.get("subscription").asText())
+        return toJson(domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText())
                 .join(UUID.fromString(args.get("member_id").asText())));
     }
 
@@ -326,7 +332,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeMemberLease(String path, JsonNode args, boolean needsLeaseEpoch) {
-        var member = activeClient.subscriptionMember(args.get("subscription").asText());
+        var member = domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText());
         if ("release".equals(path.substring(path.lastIndexOf('/') + 1))) {
             member.release(joinedFrom(args), leaseFrom(args));
             return Transport.json().createObjectNode();
@@ -342,7 +348,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeMemberTransfer(JsonNode args) {
-        var member = activeClient.subscriptionMember(args.get("subscription").asText());
+        var member = domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText());
         var lease = member.transfer(joinedFrom(args), leaseFrom(args),
                 UUID.fromString(args.get("to_member_id").asText()),
                 args.get("to_member_epoch").asLong(),
@@ -353,7 +359,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeMemberFetch(JsonNode args) {
-        var page = activeClient.subscriptionMember(args.get("subscription").asText())
+        var page = domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText())
                 .fetch(joinedFrom(args), leaseFrom(args),
                         args.hasNonNull("limit") ? args.get("limit").asInt() : null);
         return toJson(page);
@@ -365,18 +371,19 @@ class ConformanceRunnerIT {
                 args.hasNonNull("cursor")
                         ? new dev.whitewater.model.Cursor(args.get("cursor").asText()) : null,
                 readPositions(args.path("positions")), 0, 0, null, null);
-        activeClient.subscriptionMember(args.get("subscription").asText())
+        domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText())
                 .ack(joinedFrom(args), leaseFrom(args), page);
         return Transport.json().createObjectNode();
     }
 
     private JsonNode executeMemberState(JsonNode args) {
-        return toJson(activeClient.subscriptionMemberState(args.get("subscription").asText()));
+        return toJson(domainOf(activeClient, args.get("subscription").asText())
+                .subscription(args.get("subscription").asText()).memberState());
     }
 
     private JsonNode executeSubscriptionSeek(JsonNode args) {
-        return toJson(activeClient.seekSubscription(
-                args.get("subscription").asText(),
+        return toJson(domainOf(activeClient, args.get("subscription").asText())
+                .subscription(args.get("subscription").asText()).seek(
                 args.get("position").asText(),
                 args.hasNonNull("timestamp_ns") ? args.get("timestamp_ns").asLong() : null,
                 args.hasNonNull("cursor")
@@ -394,7 +401,8 @@ class ConformanceRunnerIT {
                 decodeBytes(args.get("payload")),
                 args.hasNonNull("event_time_ns") ? args.get("event_time_ns").asLong() : null,
                 decodeMetadata(args.path("metadata")));
-        return toJson(activeClient.feeds().useCompression(args.path("use_compression").asBoolean())
+        return toJson(domainOf(activeClient, args.get("feed").asText()).feedOps()
+                .useCompression(args.path("use_compression").asBoolean())
                 .append(args.get("feed").asText(), record));
     }
 
@@ -423,7 +431,8 @@ class ConformanceRunnerIT {
                 args.hasNonNull("wait_ms") ? args.get("wait_ms").asLong() : null,
                 args.hasNonNull("after_event_time_ns")
                         ? args.get("after_event_time_ns").asLong() : null);
-        return toJson(activeClient.feeds().temporaryFetch(args.get("feed").asText(), options));
+        return toJson(domainOf(activeClient, args.get("feed").asText()).feedOps()
+                .temporaryFetch(args.get("feed").asText(), options));
     }
 
     private JsonNode executeStoreMutate(JsonNode args) {

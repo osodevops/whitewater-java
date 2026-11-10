@@ -29,17 +29,17 @@ public class WriteFeed {
                 .apiKey("whitewater-local-development-admin-key")
                 .build();
 
-        client.createDomain("demo");
-        client.createFeed("demo.orders");
+        var demo = client.createDomain("demo");
+        demo.createFeed("orders");
 
         // One binding carries the feed name + codecs. Order.class maps to
         // JSON; ProtobufCodecs.of(Order.class) or Codecs.of(...) bind
         // schema formats the same way.
-        Feed<String, Order> orders = client.feed("demo.orders", Order.class);
+        Feed<String, Order> orders = demo.feed("orders", Order.class);
 
         // Session-bound handle: declares the Writer if missing, opens
         // OPEN WRITER SESSION internally, and owns the fencing epoch.
-        FeedWriter<String, Order> writer = orders.writer("orders.writer.sess");
+        FeedWriter<String, Order> writer = orders.writer("writer.sess");
 
         // simplest form: auto request identity, ingest-clock event time.
         var first = writer.append("order-1", new Order("order-1", 42));
@@ -59,7 +59,7 @@ public class WriteFeed {
                 FeedEvent.of("order-4", new Order("order-4", 9))));
         System.out.printf("batch committed %d records%n", batch.results().size());
 
-        // Escape hatch: client.writer(name) is the same session bound to
+        // Escape hatch: demo.writer(name) is the same session bound to
         // String/byte[] — and feed.view(String.class, byte[].class)
         // rebinds any typed handle to raw wire bytes.
     }

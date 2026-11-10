@@ -1,8 +1,7 @@
 import dev.whitewater.WhitewaterClient;
-import dev.whitewater.admin.Commands;
 import dev.whitewater.model.Extractor;
-import dev.whitewater.model.NamedKey;
 import dev.whitewater.model.PipeOperation;
+import dev.whitewater.model.StateStoreSpec;
 import dev.whitewater.model.Time;
 import dev.whitewater.model.WindowAggregation;
 import dev.whitewater.model.WindowTime;
@@ -66,50 +65,53 @@ public class WindowPipes {
                         "whitewater-local-development-admin-key"))
                 .build();
 
-        var exec = client.commands(Commands.of()
-                .createDomain("accounts")
-                .createFeed("accounts.events")
-                .createFeed("accounts.results")
-                .createFeed("accounts.archive")
-                .createSubscription("accounts.flow", "accounts.events")
-                .createSubscription("accounts.archive.flow", "accounts.events")
-                // A window Pipe's output store must declare non-unique
-                // 'key' and 'pane' named keys — the pane view stays
-                // enumerable without knowing composite row keys.
-                .defineStateStore("accounts.panes", null, List.of(
-                        new NamedKey("key", false),
-                        new NamedKey("pane", false)))
-                // WCL equivalent:
-                //   CREATE PIPE accounts.watermarked
-                //   FROM SUBSCRIPTION accounts.flow
-                //   TO STATESTORE accounts.panes
-                //   WINDOW 1h EVENT WATERMARK 5m GRACE 30s EXPIRE 2h
-                //   BY KEY COUNT EMIT TO FEED accounts.results;
-                .defineWindowPipe(
-                        "accounts.watermarked",
-                        "accounts.flow",
-                        "accounts.panes",
-                        PipeOperation.window(
-                                Time.h(1),                       // WINDOW 1h panes
-                                Extractor.recordKey(),           // BY KEY — group on the record Key
-                                WindowAggregation.count(),       // COUNT per (Key, pane)
-                                WindowTime.EVENT,
-                                null,                            // no MAX_LATE — one lateness model only
-                                Time.m(5),                       // WATERMARK: horizon = max(event) - 5m
-                                Time.s(30),                      // GRACE 30s: emitted panes revise + re-emit
-                                Time.h(2),                       // EXPIRE 2h: pane retention bound
-                                null, null),
-                        "accounts.results")                        // EMIT TO FEED
-                // A plain copy Pipe on its own Subscription, for the
-                // archive shape a window Pipe deliberately is not.
-                .defineForwardPipe(
-                        "accounts.relay", "accounts.archive.flow", "accounts.archive"));
+        // Every name resolves inside the accounts Domain —
+        // "flow" means accounts.flow.
+        var accounts = client.createDomain("accounts");
+        accounts.createFeed("events");
+        accounts.createFeed("results");
+        accounts.createFeed("archive");
+        accounts.createSubscription("flow", "events");
+        accounts.createSubscription("archive.flow", "events");
 
-        System.out.println("declared at catalog revision " + exec.revision());
+        // A window Pipe's output store must declare non-unique
+        // 'key' and 'pane' named keys — the pane view stays
+        // enumerable without knowing composite row keys.
+        accounts.defineStateStore(
+                StateStoreSpec.named("panes")
+                        .addKey("key")
+                        .addKey("pane"),
+                (String) null);
+
+        // WCL equivalent:
+        //   CREATE PIPE accounts.watermarked
+        //   FROM SUBSCRIPTION accounts.flow
+        //   TO STATESTORE accounts.panes
+        //   WINDOW 1h EVENT WATERMARK 5m GRACE 30s EXPIRE 2h
+        //   BY KEY COUNT EMIT TO FEED accounts.results;
+        accounts.defineWindowPipe(
+                "watermarked",
+                "flow",
+                "panes",
+                PipeOperation.window(
+                        Time.h(1),                       // WINDOW 1h panes
+                        Extractor.recordKey(),           // BY KEY — group on the record Key
+                        WindowAggregation.count(),       // COUNT per (Key, pane)
+                        WindowTime.EVENT,
+                        null,                            // no MAX_LATE — one lateness model only
+                        Time.m(5),                       // WATERMARK: horizon = max(event) - 5m
+                        Time.s(30),                      // GRACE 30s: emitted panes revise + re-emit
+                        Time.h(2),                       // EXPIRE 2h: pane retention bound
+                        null, null),
+                "results");                              // EMIT TO FEED accounts.results
+
+        // A plain copy Pipe on its own Subscription, for the
+        // archive shape a window Pipe deliberately is not.
+        accounts.defineForwardPipe("relay", "archive.flow", "archive");
 
         // Lifecycle surface: describe returns the live catalog row —
         // stage plus the opaque operation definition as declared.
-        var pipe = client.pipe("accounts.watermarked");
+        var pipe = accounts.pipe("watermarked");
         var info = pipe.describe();
         System.out.println(info.name() + " stage=" + info.stage()
                 + " status=" + info.status());

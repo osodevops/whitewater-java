@@ -7,13 +7,13 @@ import java.util.Objects;
 
 /**
  * Fluent declaration + open of a durable named Reader — the typed
- * companion to {@link WhitewaterClient#createReader(Domain, Feed)}:
+ * companion to {@link Domain#createReader(Feed)}:
  *
  * <pre>{@code
  * import static dev.whitewater.model.ReaderStart.*;
  *
  * Domain shop = client.domain("shop");
- * try (var reader = client.createReader(shop, shop.getFeed("orders"))
+ * try (var reader = shop.createReader(shop.getFeed("orders"))
  *         .readerId("fulfillment")            // the Kafka groupId analogue
  *         .readerStartPoint(Beginning)        // first-time start — like auto.offset.reset
  *         .maxPageSize(256)
@@ -48,9 +48,12 @@ public final class ReaderBuilder<K, V> {
     /**
      * The durable Reader identity — the Kafka {@code groupId}
      * analogue. Required before {@link #open()}/{@link #declare()}.
+     * Resolves inside the Feed's Domain: {@code readerId("fulfillment")}
+     * on {@code shop.orders} binds {@code shop.fulfillment}.
      */
     public ReaderBuilder<K, V> readerId(String readerId) {
-        this.readerId = Objects.requireNonNull(readerId, "readerId is required");
+        this.readerId = feed.scope(
+                Objects.requireNonNull(readerId, "readerId is required"));
         return this;
     }
 

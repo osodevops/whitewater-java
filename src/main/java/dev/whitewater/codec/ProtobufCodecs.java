@@ -20,7 +20,7 @@ import java.util.Objects;
  *
  * <pre>{@code
  * StateStore<String, User> users =
- *         client.stateStore("app.users", ProtobufCodecs.of(User.class));
+ *         domain.stateStore("users", ProtobufCodecs.of(User.class));
  * users.put("user-1", User.newBuilder().setName("alice").build());
  * User back = users.get("user-1").payload();
  * }</pre>

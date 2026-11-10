@@ -174,7 +174,7 @@ class FeedConsumerTest {
     }
 
     private Feed<String, String> feed() {
-        return client.feed("users.updates", String.class);
+        return client.domain("users").feed("updates", String.class);
     }
 
     private void awaitCount(AtomicInteger counter, int target) throws InterruptedException {
@@ -275,21 +275,21 @@ class FeedConsumerTest {
 
     @Test
     void findReturnsTheDecodedValueOrEmpty() {
-        var store = client.stateStore("users.profiles", Long.class);
+        var store = client.domain("users").stateStore("profiles", Long.class);
         assertEquals(42L, store.find("alice").orElseThrow());
         assertTrue(store.find("nobody").isEmpty());
     }
 
     @Test
     void getOrDefaultReturnsTheFallbackOnMiss() {
-        var store = client.stateStore("users.profiles", Long.class);
+        var store = client.domain("users").stateStore("profiles", Long.class);
         assertEquals(42L, store.getOrDefault("alice", 0L));
         assertEquals(0L, store.getOrDefault("nobody", 0L));
     }
 
     @Test
     void findByReturnsTheFirstNamedKeyMatch() {
-        var store = client.stateStore("users.profiles", String.class);
+        var store = client.domain("users").stateStore("profiles", String.class);
         assertEquals("first", store.findBy("user_id", "u-7").orElseThrow());
         var body = bodies.get(0);
         assertTrue(body.contains("\"named_key\":\"user_id\""));
@@ -301,6 +301,6 @@ class FeedConsumerTest {
         // supervision restarts resume from the Reader's durable progress.
         var consumer = feed().consumer("enricher")
                 .startAt(ReaderStart.beginning());
-        assertEquals("enricher", consumer.reader());
+        assertEquals("users.enricher", consumer.reader());
     }
 }

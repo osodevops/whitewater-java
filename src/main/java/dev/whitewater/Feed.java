@@ -40,7 +40,7 @@ import java.util.function.Consumer;
  * payload Codecs) for objects; {@code feed.view(String.class,
  * byte[].class)} is the escape hatch to raw bytes.
  */
-public final class Feed<K, V> {
+public final class Feed<K, V> implements ScopedRef {
 
     private final WhitewaterClient client;
     private final FeedClient feedOps;
@@ -70,6 +70,13 @@ public final class Feed<K, V> {
 
     /** The Feed's dotted name. */
     public String name() {
+        return name;
+    }
+
+    /** A bound Feed is always absolute — usable as a Pipe endpoint
+     * from any Domain. */
+    @Override
+    public String resolve(Domain domain) {
         return name;
     }
 
@@ -147,6 +154,7 @@ public final class Feed<K, V> {
      * feed's Codecs so {@code writer.append(key, value)} just works.
      */
     public FeedWriter<K, V> writer(String writerName) {
+        writerName = scope(writerName);
         ensureWriter(writerName);
         return new FeedWriter<>(client.writer(writerName), keyCodec, valueCodec);
     }
@@ -172,6 +180,7 @@ public final class Feed<K, V> {
      * fetch capacity, and returns decoded {@link FeedMessage}s.
      */
     public FeedReader<K, V> reader(String readerName, int capacity) {
+        readerName = scope(readerName);
         ensureReader(readerName, ReaderStart.beginning());
         return new FeedReader<>(client.reader(readerName, capacity), keyCodec, valueCodec);
     }
@@ -205,7 +214,7 @@ public final class Feed<K, V> {
      * progress, graceful {@link FeedConsumer#close}. See {@link FeedConsumer}.
      */
     public FeedConsumer<K, V> consumer(String reader) {
-        return new FeedConsumer<>(this, reader);
+        return new FeedConsumer<>(this, scope(reader));
     }
 
     Subscription subscribeTyped(
@@ -214,7 +223,7 @@ public final class Feed<K, V> {
             int capacity,
             Consumer<List<FeedMessage<K, V>>> onRecords,
             Consumer<WhitewaterException> onError) {
-        return client.subscribe(reader, name, start, capacity,
+        return client.subscribe(scope(reader), name, start, capacity,
                 records -> onRecords.accept(
                         records.stream().map(this::decode).toList()),
                 onError);
@@ -249,5 +258,12 @@ public final class Feed<K, V> {
                 throw e;
             }
         }
+    }
+
+    /** Resolve a resource name inside this Feed's Domain —
+     * {@code "audit"} on {@code shop.orders} means {@code shop.audit}. */
+    String scope(String relative) {
+        var domain = name.contains(".") ? name.substring(0, name.indexOf('.')) : name;
+        return relative.startsWith(domain + ".") ? relative : domain + "." + relative;
     }
 }

@@ -8,22 +8,32 @@ one internal `Transport`. There are no other network paths.
 
 ```
 WhitewaterClient  ─┬─ wcl / commands / Commands.of()    → POST /v1/admin/*
-                   ├─ createFeed / describeFeed / …     → typed WCL builders
-                   ├─ feeds()   → FeedClient            → /v1/feeds/*, /v1/readers/temporary/fetch
+                   ├─ createDomain / domain / getDomain → Domain handles
+                   ├─ describeDomain / renameDomain / …  → Domain lifecycle
+                   └─ demand*/hotKeys/nodeMetrics       → cluster observability
+
+Domain            ─┬─ createFeed / describeFeed / …     → typed WCL builders
+                   ├─ feedOps()  → FeedClient           → /v1/feeds/*, /v1/readers/temporary/fetch
                    ├─ writer(name)                      → session-bound Writer
                    ├─ writerSession(name, epoch)        → /v1/writers/append[-batch]
-                   ├─ reader(name, maxPageSize)            → session-bound Reader
+                   ├─ reader(name, maxPageSize)         → session-bound Reader
                    ├─ readerSession(name)               → /v1/readers/open|fetch|ack|close
                    ├─ member(sub)                       → session-bound Member
-                   ├─ subscriptionMember(name)          → /v1/subscriptions/members/*
-                   ├─ seekSubscription / memberState    → /v1/subscriptions/*
+                   ├─ subscription(name).memberClient() → /v1/subscriptions/members/*
+                   ├─ subscription(name).seek/memberState → /v1/subscriptions/*
                    ├─ queryIndex                        → /v1/indexes/query
-                   └─ stateStore / stateStores          → /v1/state-stores/*
+                   └─ stateStore / defineStateStore     → /v1/state-stores/*
         │                      │
      Transport            Wire (codec)
    (endpoints,        (request building,
     auth, errors)      response mapping)
 ```
+
+The client owns Domains and cluster-wide plumbing only — every Feed,
+Writer, Reader, Subscription, Member, Pipe, StateStore, and Index is
+reached through a `Domain` handle, never directly off the client. There
+is no `client.feed(...)` or `client.writer(...)`: a name like "orders"
+only means something inside a business namespace.
 
 ### `Transport`
 
@@ -49,8 +59,9 @@ nanoseconds on decimal strings, cursors stay opaque strings.
 ## Resource management — two doors, one room
 
 `wcl(script)` sends a raw WCL script to `POST /v1/admin/wcl`. The typed
-methods are thin builders over it — `client.createFeed("orders.events")`
-serializes `CREATE FEED orders.events` and calls `wcl` internally.
+Domain methods are thin builders over it —
+`domain.createFeed("orders.events")` serializes
+`CREATE FEED <domain>.orders.events` and calls `wcl` internally.
 
 Two name validators run before interpolation:
 
@@ -60,7 +71,7 @@ Two name validators run before interpolation:
   `^[A-Za-z][A-Za-z0-9_-]{0,127}$`.
 
 A bad name throws `IllegalArgumentException` locally — nothing reaches
-the wire, so `createFeed("x; DROP ...")` cannot inject a statement.
+the wire, so `domain.createFeed("x; DROP ...")` cannot inject a statement.
 
 `ReaderStart` supplies `START AT` positions: `beginning()`, `now()`,
 `cursor(c)` (single-quotes escaped `'` → `''`), `timestampNs(ns)`.
@@ -90,21 +101,22 @@ statement and calls `wcl` internally. The Domain-typed surface composes
 names for you: hand it the relative name and it prefixes the Domain:
 
 ```java
-client.createDomain("shop");                         // CREATE DOMAIN shop;
-var shop = client.getDomain("shop");                 // verifies + materializes
+var shop = client.createDomain("shop");              // CREATE DOMAIN shop; + handle
+// or client.getDomain("shop")                       // verifies + materializes
 
 shop.createFeed("orders");                           // CREATE FEED shop.orders;
-client.createWriter("orders.writer", "shop.orders");
-client.openWriterSession("orders.writer");           // epoch in .data()
-client.createReader("audit", "shop.orders", ReaderStart.beginning());
-client.listFeeds();                                  // SHOW FEEDS;
-client.seekReader("audit", ReaderStart.now());       // SEEK READER ... TO NOW;
-client.dropFeed("shop.orders");                      // DROP FEED shop.orders;
+shop.createWriter("writer", "orders");               // shop.writer on shop.orders
+shop.openWriterSession("writer");                    // epoch in .data()
+shop.createReader("audit", "orders", ReaderStart.beginning());
+shop.feeds();                                        // [shop.orders, …]
+shop.seekReader("audit", ReaderStart.now());         // SEEK READER shop.audit TO NOW;
+shop.dropFeed("orders");                             // DROP FEED shop.orders;
 ```
 
-`client.createFeed("shop.orders")` with the fully-qualified name remains
-the flat-name form; `domain.createFeed("orders")` is the same statement
-with the Domain prefix composed for you.
+Every name handed to a Domain method resolves inside that Domain —
+`shop.createReader("audit", …)` declares `shop.audit` bound to
+`shop.orders`; a name already prefixed (`"shop.orders"`) passes through
+verbatim, so handles compose freely.
 
 `client.commands(...)` is the second door — the typed JSON command
 path. Two forms:
@@ -131,7 +143,7 @@ refuses them and they are not application surface. Everything validates
 locally, so a malformed command fails before it reaches the Control
 Plane.
 
-(`client.stateStores().define(spec, null)` is sugar over
+(`domain.defineStateStore(spec, null)` is sugar over
 `define_state_store`.) `DROP` is spelled in WCL for every resource
 including stores: `client.wcl("DROP STATESTORE accounts.employees")` ≡
 `store.drop()` ≡ `Commands.of().drop(ResourceKind.STATE_STORE, ...)`.
@@ -161,28 +173,37 @@ shop.refresh();             // re-pull the snapshot
 ```
 
 `domain.feed("orders")` / `domain.getFeed("orders")` resolve
-`shop.orders` — pure name composition, zero I/O, codecs bindable exactly
-like `client.feed(...)`. Deeper relative names work the same way:
+`shop.orders` — pure name composition, zero I/O, codecs bindable through
+the `Class`/`Codec` overloads. Deeper relative names work the same way:
 `shop.feed("orders.hourly")` binds `shop.orders.hourly`. The same
 composition applies to the other resources — `shop.pipe("orders.relay")`
 binds the Pipe `shop.orders.relay`, `shop.stateStore("customers")` the
 StateStore `shop.customers`, and `shop.resolve("orders.hourly")` →
 `shop.orders.hourly` composes the wire name anywhere a full name is
-asked for (`Commands.of()`, `client.pipe(...)`, the store `Class`/`Codec`
-overloads). A relative name is always interpreted inside the Domain; a
-name that fails the dotted grammar is refused locally.
+asked for (`Commands.of()`, `Scoped.absolute(...)`, the store
+`Class`/`Codec` overloads). A relative name is always interpreted inside
+the Domain; a name that fails the dotted grammar is refused locally.
+
+Pipe endpoints can *cross* Domains deliberately: a `ScopedRef` — a
+`Feed`/`StateStore`/`SubscriptionRef` handle from another Domain, or
+`Scoped.absolute("other.name")` — carries its full dotted name while
+plain `String`/`Scoped.relative` endpoints resolve in the declaring
+Domain. See [pipes.md](pipes.md) and
+[examples/CrossDomain.java](../examples/CrossDomain.java).
 
 ### Fluent Readers and Writers
 
-`client.createReader(domain, feed)` and `createWriter(domain, feed)`
-return builders that declare the resource (idempotently) and open a
-session with the Feed's codecs bound:
+`domain.createReader(feed)` and `domain.createWriter(feed)` return
+builders that declare the resource (idempotently) and open a session
+with the Feed's codecs bound. `readerId`/`writerId` resolve inside the
+Domain too — `"fulfillment"` declares `shop.fulfillment`, not a global
+name:
 
 ```java
 import static dev.whitewater.model.ReaderStart.*;   // Beginning, End
 
-try (var reader = shop.createReader("orders")     // = client.createReader(shop, …)
-        .readerId("fulfillment")         // durable consume identity — Kafka groupId
+try (var reader = shop.createReader("orders")
+        .readerId("fulfillment")         // shop.fulfillment — Kafka groupId
         .readerStartPoint(Beginning)     // first-time start — auto.offset.reset
         .maxPageSize(256)
         .open()) {                        // FeedReader<String, String>
@@ -218,56 +239,56 @@ typed reads come back as `FeedMessage<K,V>` with decoded keys/values.
 `m.value()` decodes one (the SDK owns the byte conversion; plain JSON
 needs no schema binding). `feed(name, byte[].class)` opts into raw
 binary; any other `Class`/`Codec` binds schema or custom serialization.
-`client.stateStore(name)` defaults to `StateStore<String, String>` the
+`domain.stateStore(name)` defaults to `StateStore<String, String>` the
 same way.
 
 ## Reading
 
 Three shapes, in increasing durability:
 
-1. **`feeds().records(feed, limit, after)`** — one-shot committed history
-   page.
-2. **`feeds().temporaryFetch(feed, options)`** — anonymous ephemeral
+1. **`domain.feedOps().records(feed, limit, after)`** — one-shot
+   committed history page.
+2. **`domain.feedOps().temporaryFetch(feed, options)`** — anonymous ephemeral
    reader. `TemporaryFetchOptions.tail(after, limit, waitMs)` is a
    server-side long-poll: the call blocks until records arrive or
    `wait_ms` elapses, returning `records` + `nextCursor`. Continue with
    `nextCursor`, never the last record's cursor — the page may be
    filtered or empty.
-3. **`client.reader(name, maxPageSize)`** — durable independent cursor,
+3. **`domain.reader(name, maxPageSize)`** — durable independent cursor,
    session-bound: opens internally, `fetch(limit)` tracks the delivered
    Cursor so `ack()` commits the right frontier, `close()` releases the
-   fence. (The explicit-epoch form `readerSession(name)` +
+   fence. (The explicit-epoch form `domain.readerSession(name)` +
    `open`/`fetch`/`ack`/`close` remains for callers managing session
    state themselves.) Progress survives restarts.
 
 Two managed wrappers sit on top of those primitives:
 
-- **`feeds().load(feed, start, sink)`** — one-shot bulk read: pages
-  `temporaryFetch` from `ReaderStart` until the frontier is drained.
-  `sink` is any `Consumer<List<FeedRecord>>`.
-- **`client.subscribe(reader, feed, start, onRecords[, onError])`** — a
+- **`domain.feedOps().load(feed, start, sink)`** — one-shot bulk read:
+  pages `temporaryFetch` from `ReaderStart` until the frontier is
+  drained. `sink` is any `Consumer<List<FeedRecord>>`.
+- **`domain.subscribe(reader, feed, start, onRecords[, onError])`** — a
   durable consume loop on a background thread: provisions the Reader
   when missing, then `open` → [`fetch` → `onRecords` → `ack`] → `close`.
   Transient errors retry; `StaleSession` and hard refusals terminate via
   `onError`/`failure()`. The non-daemon thread keeps the JVM alive until
   `Subscription.close()`.
 
-For cooperating consumers, `client.member(sub)` joins internally and
+For cooperating consumers, `domain.member(sub)` joins internally and
 owns the member identity, fencing epoch, and lease plumbing — the worker
 loop reads `claim() → fetch → ack → release`, with `transfer(work, peer)`
-for explicit handoff. The raw `client.subscriptionMember(sub)` keeps
+for explicit handoff. The raw `domain.memberClient(sub)` keeps
 explicit epoch plumbing for callers managing identities themselves.
 Members claim work leases; there is no global rebalance.
 
 ## Writing
 
-- **Session-bound**: `client.writer(name)` opens `OPEN WRITER SESSION`
+- **Session-bound**: `domain.writer(name)` opens `OPEN WRITER SESSION`
   internally and owns the fencing epoch — `append(key, payload)` auto
   request identities, `reopen()` rebinds after `StaleSession`.
-- **Explicit epoch**: `writerSession(name, epoch)` binds a session opened
-  elsewhere; `append` with a stable `requestId` per logical write. The
-  server dedupes identical request IDs and fences stale sequences.
-- **Ad-hoc**: `feeds().append(feed, new FeedAppend(requestId,
+- **Explicit epoch**: `domain.writerSession(name, epoch)` binds a session
+  opened elsewhere; `append` with a stable `requestId` per logical write.
+  The server dedupes identical request IDs and fences stale sequences.
+- **Ad-hoc**: `domain.feedOps().append(feed, new FeedAppend(requestId,
   writerSessionId, key, payload))` — caller supplies ephemeral writer
   identity; same dedup rule.
 

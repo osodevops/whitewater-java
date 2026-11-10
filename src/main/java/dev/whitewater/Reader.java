@@ -17,7 +17,7 @@ import java.util.concurrent.Executor;
  * {@link #ack} commits the page's delivered Cursor durably.
  *
  * <pre>{@code
- * try (var reader = client.reader("orders.audit", 64)) {
+ * try (var reader = domain.reader("audit", 64)) {   // orders.audit
  *     for (var page = reader.fetch(); !page.records().isEmpty(); page = reader.fetch()) {
  *         handle(page.records());
  *         reader.ack();                // commits the page's frontier

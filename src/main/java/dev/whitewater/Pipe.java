@@ -16,7 +16,7 @@ import java.util.Objects;
  * frontier.
  *
  * <pre>{@code
- * var relay = client.pipe("orders.relay");
+ * var relay = domain.pipe("orders.relay");
  * relay.pause();                 // cooperative, idempotent
  * relay.resume();                // restarts from the durable frontier
  * PipeInfo info = relay.describe(); // live catalog row

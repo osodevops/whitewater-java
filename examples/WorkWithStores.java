@@ -28,16 +28,17 @@ public class WorkWithStores {
                         "WHITEWATER_API_KEY", "whitewater-local-development-admin-key"))
                 .build();
 
-        // 1. Declare the store — named secondary keys at creation.
-        client.commands(Commands.of().createDomain("accounts"));
-        var spec = StateStoreSpec.named("accounts.employees")
+        // 1. Declare the store inside the accounts Domain — named
+        //    secondary keys at creation. The spec name resolves in-domain.
+        var accounts = client.createDomain("accounts");
+        var spec = StateStoreSpec.named("employees")
                 .addKey("passport", true)                    // unique
                 .addKey("department");                       // non-unique
-        client.stateStores().define(spec, null);              // manual store
+        accounts.defineStateStore(spec, (String) null);       // manual store
 
         // 2. Bind the typed facade — just name the classes; the SDK
         //    picks the codec (String -> UTF-8, objects -> Jackson JSON).
-        var store = client.stateStore("accounts.employees",
+        var store = accounts.stateStore("employees",
                 String.class, Employee.class);
 
         // 3. Write — objects go in, named postings ride along.

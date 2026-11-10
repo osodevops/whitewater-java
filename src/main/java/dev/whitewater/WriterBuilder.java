@@ -6,12 +6,12 @@ import java.util.Objects;
 
 /**
  * Fluent declaration + session-open of a durable named Writer — the
- * typed companion to {@link WhitewaterClient#createWriter(Domain, Feed)}:
+ * typed companion to {@link Domain#createWriter(Feed)}:
  *
  * <pre>{@code
  * Domain shop = client.domain("shop");
- * var writer = client.createWriter(shop, shop.getFeed("orders"))
- *         .writerId("orders.ingest")
+ * var writer = shop.createWriter(shop.getFeed("orders"))
+ *         .writerId("ingest")
  *         .open();
  * writer.append("order-1", order);             // encoded by the Feed's codecs
  * }</pre>
@@ -27,9 +27,13 @@ public final class WriterBuilder<K, V> {
         this.feed = Objects.requireNonNull(feed);
     }
 
-    /** The durable Writer identity. Required before {@link #open()}/{@link #declare()}. */
+    /** The durable Writer identity. Required before
+     * {@link #open()}/{@link #declare()}. Resolves inside the Feed's
+     * Domain: {@code writerId("ingest")} on {@code shop.orders} binds
+     * {@code shop.ingest}. */
     public WriterBuilder<K, V> writerId(String writerId) {
-        this.writerId = Objects.requireNonNull(writerId, "writerId is required");
+        this.writerId = feed.scope(
+                Objects.requireNonNull(writerId, "writerId is required"));
         return this;
     }
 

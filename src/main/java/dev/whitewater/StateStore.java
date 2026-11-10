@@ -52,7 +52,7 @@ import java.util.function.Consumer;
  * {@link Boolean}, {@code byte[]}, or null; a {@link List} value carries
  * one typed value per posting component.
  */
-public final class StateStore<K, V> {
+public final class StateStore<K, V> implements ScopedRef {
 
     private final Transport transport;
     private final String name;
@@ -72,6 +72,13 @@ public final class StateStore<K, V> {
     }
 
     public String name() {
+        return name;
+    }
+
+    /** A bound StateStore is always absolute — usable as a Pipe
+     * endpoint from any Domain. */
+    @Override
+    public String resolve(Domain domain) {
         return name;
     }
 

@@ -36,16 +36,16 @@ public class AdminCommands {
         client.wcl("""
                 CREATE DOMAIN ops;
                 CREATE FEED ops.audit;
-                CREATE READER ops-audit-tail FROM ops.audit START AT BEGINNING;
+                CREATE READER ops.audit.tail FROM ops.audit START AT BEGINNING;
                 """);
 
         // --- typed commands route: identical catalog semantics ---
         var exec = client.commands(Commands.of()
                 .createDomain("orders")
                 .createFeed("orders.events")
-                .createWriter("ingest", "orders.events")
-                .createReader("audit", "orders.events", ReaderStart.beginning())
-                .createSubscription("audit.sub", "orders.events")
+                .createWriter("orders.ingest", "orders.events")
+                .createReader("orders.audit", "orders.events", ReaderStart.beginning())
+                .createSubscription("orders.audit.sub", "orders.events")
                 .createRole("auditor")
                 .grant(Set.of(Permission.READ), "orders.events", "auditor")
                 .defineIndex("orders.events.bystatus", "orders.events",
@@ -58,14 +58,16 @@ public class AdminCommands {
         var feeds = client.commands(Commands.of().show(ShowKind.FEEDS));
         feeds.results().forEach(r -> System.out.println(r.data()));
 
-        // index reads run through commands or the query endpoint
-        var page = client.queryIndex("orders.events.bystatus",
+        // index reads run through commands or the Domain-scoped query
+        var orders = client.domain("orders");
+        var page = orders.queryIndex("events.bystatus",
                 IndexPredicate.exact("open"), 64, false, null);
         System.out.println("index page: " + page.rows().size()
                 + " rows, behind=" + page.behind());
 
-        // operator surfaces
-        var state = client.subscriptionMemberState("audit.sub");
+        // operator surfaces — a Subscription handle carries its
+        // absolute name (and travels to other Domains for Pipes)
+        var state = orders.subscription("audit.sub").memberState();
         System.out.println("subscription epoch " + state.ownershipEpoch()
                 + ", members " + state.memberEpochs());
     }

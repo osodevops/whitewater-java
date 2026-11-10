@@ -6,6 +6,7 @@ import dev.whitewater.model.Codec;
 import dev.whitewater.model.Codecs;
 import dev.whitewater.model.ControlExecution;
 import dev.whitewater.model.FeedSchema;
+import dev.whitewater.model.ReaderStart;
 import dev.whitewater.model.ResourceKind;
 import dev.whitewater.model.ShowKind;
 
@@ -273,6 +274,457 @@ public final class Domain {
      */
     public StateStore<String, String> stateStore(String relative) {
         return client.stateStore(resolve(relative));
+    }
+
+    // ---- Writers / Readers ----------------------------------------------------
+
+    /** {@code CREATE WRITER <name> TO <feed>} — both names resolve
+     * inside this Domain. */
+    public ControlExecution createWriter(String writer, String feed) {
+        return client.createWriter(resolve(writer), resolve(feed));
+    }
+
+    /** {@code CREATE READER <name> FROM <feed>} — both names resolve
+     * inside this Domain; {@code start} applies on first declare. */
+    public ControlExecution createReader(String reader, String feed, ReaderStart start) {
+        return client.createReader(resolve(reader), resolve(feed), start);
+    }
+
+    /** {@link #createReader(String, String, ReaderStart)} starting at BEGINNING. */
+    public ControlExecution createReader(String reader, String feed) {
+        return createReader(reader, feed, ReaderStart.beginning());
+    }
+
+    /** {@code OPEN WRITER SESSION <writer>} — the returned epoch feeds
+     * {@link #writer(String, long)}. */
+    public ControlExecution openWriterSession(String writer) {
+        return client.openWriterSession(resolve(writer));
+    }
+
+    /** {@code SEEK READER <reader> TO <start>} — repositions a durable
+     * Reader inside this Domain. */
+    public ControlExecution seekReader(String reader, ReaderStart start) {
+        return client.seekReader(resolve(reader), start);
+    }
+
+    /**
+     * A session-bound Writer inside this Domain — opens
+     * {@code OPEN WRITER SESSION} internally and owns the fencing
+     * epoch. The surface applications should use.
+     */
+    public Writer writer(String name) {
+        return client.writer(resolve(name));
+    }
+
+    /**
+     * A Writer session facade under an explicit {@code sessionEpoch}.
+     * Prefer {@link #writer(String)}; this form is for callers managing
+     * session state themselves.
+     */
+    public WriterSessionClient writerSession(String writer, long sessionEpoch) {
+        return client.writerSession(resolve(writer), sessionEpoch);
+    }
+
+    /** A session-bound named Reader inside this Domain — opens the
+     * session internally and tracks the delivered Cursor for
+     * {@link Reader#ack()}. */
+    public Reader reader(String name, int capacity) {
+        return client.reader(resolve(name), capacity);
+    }
+
+    /** A named-Reader session facade inside this Domain under an
+     * explicit epoch. */
+    public ReaderSessionClient readerSession(String reader) {
+        return client.readerSession(resolve(reader));
+    }
+
+    // ---- Subscriptions --------------------------------------------------------
+
+    /** {@code CREATE SUBSCRIPTION <name> FROM <feed>} — both names
+     * resolve inside this Domain: {@code pipes.createSubscription("audit",
+     * "orders")} declares {@code pipes.audit} on {@code pipes.orders}. */
+    public ControlExecution createSubscription(String name, String feed, ReaderStart start) {
+        return client.createSubscription(resolve(name), resolve(feed), start);
+    }
+
+    /** {@link #createSubscription(String, String, ReaderStart)} starting at BEGINNING. */
+    public ControlExecution createSubscription(String name, String feed) {
+        return createSubscription(name, feed, ReaderStart.beginning());
+    }
+
+    /**
+     * A {@link SubscriptionRef} handle on the declared Subscription
+     * {@code relative} inside this Domain — open member sessions with
+     * {@link SubscriptionRef#member()} or pass it to another Domain's
+     * Pipe definition to drive from this Subscription.
+     */
+    public SubscriptionRef subscription(String relative) {
+        return new SubscriptionRef(client, resolve(relative));
+    }
+
+    /** A cooperating member-session client on the Subscription
+     * {@code relative} inside this Domain (raw epoch plumbing). */
+    public SubscriptionMemberClient memberClient(String relative) {
+        return client.subscriptionMember(resolve(relative));
+    }
+
+    /** A session-bound member of the Subscription {@code relative}
+     * inside this Domain — joins internally. */
+    public Member member(String relative) {
+        return client.member(resolve(relative));
+    }
+
+    /** {@link #member(String)} under an explicit member identity
+     * (crash-recovery). */
+    public Member member(String relative, java.util.UUID memberId) {
+        return client.member(resolve(relative), memberId);
+    }
+
+    /**
+     * Subscribe durably to a Feed inside this Domain: ensures a Reader
+     * named {@code reader} exists (creating it at {@code start} when
+     * missing), opens a session, and invokes {@code onRecords} per
+     * fetched page on a background thread, acknowledging after each
+     * batch.
+     */
+    public Subscription subscribe(
+            String reader,
+            String feed,
+            ReaderStart start,
+            java.util.function.Consumer<java.util.List<dev.whitewater.model.FeedRecord>> onRecords,
+            java.util.function.Consumer<WhitewaterException> onError) {
+        return client.subscribe(resolve(reader), resolve(feed), start, onRecords, onError);
+    }
+
+    /** {@link #subscribe} with an explicit page capacity. */
+    public Subscription subscribe(
+            String reader,
+            String feed,
+            ReaderStart start,
+            int capacity,
+            java.util.function.Consumer<java.util.List<dev.whitewater.model.FeedRecord>> onRecords,
+            java.util.function.Consumer<WhitewaterException> onError) {
+        return client.subscribe(resolve(reader), resolve(feed), start, capacity, onRecords, onError);
+    }
+
+    /** {@link #subscribe} without an error callback. */
+    public Subscription subscribe(
+            String reader,
+            String feed,
+            ReaderStart start,
+            java.util.function.Consumer<java.util.List<dev.whitewater.model.FeedRecord>> onRecords) {
+        return client.subscribe(resolve(reader), resolve(feed), start, onRecords, null);
+    }
+
+    // ---- Catalog lifecycle -----------------------------------------------------
+
+    /** {@code DESCRIBE FEED <feed>} inside this Domain. */
+    public ControlExecution describeFeed(String relative) {
+        return client.describeFeed(resolve(relative));
+    }
+
+    /** {@code DESCRIBE WRITER <name>} inside this Domain. */
+    public ControlExecution describeWriter(String relative) {
+        return client.describeWriter(resolve(relative));
+    }
+
+    /** {@code DESCRIBE READER <name>} inside this Domain. */
+    public ControlExecution describeReader(String relative) {
+        return client.describeReader(resolve(relative));
+    }
+
+    /** {@code DESCRIBE SUBSCRIPTION <name>} inside this Domain. */
+    public ControlExecution describeSubscription(String relative) {
+        return client.describeSubscription(resolve(relative));
+    }
+
+    /** {@code RENAME FEED <current> TO <new>} — both inside this Domain. */
+    public ControlExecution renameFeed(String current, String renamed) {
+        return client.renameFeed(resolve(current), resolve(renamed));
+    }
+
+    /** {@code RENAME WRITER <current> TO <new>} — both inside this Domain. */
+    public ControlExecution renameWriter(String current, String renamed) {
+        return client.renameWriter(resolve(current), resolve(renamed));
+    }
+
+    /** {@code RENAME READER <current> TO <new>} — both inside this Domain. */
+    public ControlExecution renameReader(String current, String renamed) {
+        return client.renameReader(resolve(current), resolve(renamed));
+    }
+
+    /** {@code RENAME SUBSCRIPTION <current> TO <new>} — both inside this Domain. */
+    public ControlExecution renameSubscription(String current, String renamed) {
+        return client.renameSubscription(resolve(current), resolve(renamed));
+    }
+
+    /** {@code DROP FEED <name>} inside this Domain. */
+    public ControlExecution dropFeed(String relative) {
+        return client.dropFeed(resolve(relative));
+    }
+
+    /** {@code DROP WRITER <name>} inside this Domain. */
+    public ControlExecution dropWriter(String relative) {
+        return client.dropWriter(resolve(relative));
+    }
+
+    /** {@code DROP READER <name>} inside this Domain. */
+    public ControlExecution dropReader(String relative) {
+        return client.dropReader(resolve(relative));
+    }
+
+    /** {@code DROP SUBSCRIPTION <name>} inside this Domain. */
+    public ControlExecution dropSubscription(String relative) {
+        return client.dropSubscription(resolve(relative));
+    }
+
+    // ---- Schemas ---------------------------------------------------------------
+
+    /** {@code SET SCHEMA ON DOMAIN <name>} — this Domain's inherited
+     * default. */
+    public ControlExecution setSchema(dev.whitewater.model.FeedSchema schema) {
+        return client.setDomainSchema(name, schema);
+    }
+
+    /** {@code DROP SCHEMA ON DOMAIN <name>} — clears the declared
+     * default. */
+    public ControlExecution clearSchema() {
+        return client.clearDomainSchema(name);
+    }
+
+    /** {@code SET SCHEMA ON FEED <feed>} inside this Domain — overrides
+     * the named sides. */
+    public ControlExecution setFeedSchema(String relative, dev.whitewater.model.FeedSchema schema) {
+        return client.setFeedSchema(resolve(relative), schema);
+    }
+
+    /** {@code DROP SCHEMA ON FEED <feed>} inside this Domain — reverts
+     * to Domain inheritance. */
+    public ControlExecution clearFeedSchema(String relative) {
+        return client.clearFeedSchema(resolve(relative));
+    }
+
+    // ---- Pipes -------------------------------------------------------------------
+
+    /**
+     * {@code DEFINE PIPE <name> FROM <subscription> TO FEED <feed>} —
+     * every name resolves inside this Domain.
+     */
+    public ControlExecution defineForwardPipe(
+            String name, String subscription, String outputFeed) {
+        return defineForwardPipe(
+                name, Scoped.relative(subscription), Scoped.relative(outputFeed));
+    }
+
+    /**
+     * {@link #defineForwardPipe(String, String, String)} with explicit
+     * {@link ScopedRef} endpoints — a {@link Feed}/
+     * {@link SubscriptionRef} handle or {@link Scoped#absolute} points
+     * across Domains.
+     */
+    public ControlExecution defineForwardPipe(
+            String name, ScopedRef subscription, ScopedRef outputFeed) {
+        return client.commands(Commands.of().defineForwardPipe(
+                resolve(name),
+                subscription.resolve(this),
+                outputFeed.resolve(this)));
+    }
+
+    /**
+     * {@code DEFINE PIPE ... ENRICH FROM <store>} — point-lookup
+     * enrichment; {@code quarantineFeed} resolves the miss-quarantine
+     * target when the operation's miss disposition is {@code QUARANTINE}.
+     * String arguments resolve inside this Domain.
+     */
+    public ControlExecution defineEnrichPipe(
+            String name,
+            String subscription,
+            String outputFeed,
+            String store,
+            dev.whitewater.model.PipeOperation operation,
+            String quarantineFeed) {
+        return defineEnrichPipe(
+                name,
+                Scoped.relative(subscription),
+                Scoped.relative(outputFeed),
+                Scoped.relative(store),
+                operation,
+                quarantineFeed == null ? null : Scoped.relative(quarantineFeed));
+    }
+
+    /** {@link #defineEnrichPipe} with explicit {@link ScopedRef}
+     * endpoints for cross-Domain references. */
+    public ControlExecution defineEnrichPipe(
+            String name,
+            ScopedRef subscription,
+            ScopedRef outputFeed,
+            ScopedRef store,
+            dev.whitewater.model.PipeOperation operation,
+            ScopedRef quarantineFeed) {
+        return client.commands(Commands.of().defineEnrichPipe(
+                resolve(name),
+                subscription.resolve(this),
+                outputFeed.resolve(this),
+                store.resolve(this),
+                operation,
+                quarantineFeed == null ? null : quarantineFeed.resolve(this)));
+    }
+
+    /**
+     * {@code DEFINE PIPE ... TO STATESTORE <store>} — rolling-window
+     * aggregation; {@code emitFeed} optionally emits closed panes and
+     * requires the operation declare a lateness model. String arguments
+     * resolve inside this Domain.
+     */
+    public ControlExecution defineWindowPipe(
+            String name,
+            String subscription,
+            String outputStore,
+            dev.whitewater.model.PipeOperation operation,
+            String emitFeed) {
+        return defineWindowPipe(
+                name,
+                Scoped.relative(subscription),
+                Scoped.relative(outputStore),
+                operation,
+                emitFeed == null ? null : Scoped.relative(emitFeed));
+    }
+
+    /** {@link #defineWindowPipe} with explicit {@link ScopedRef}
+     * endpoints for cross-Domain references. */
+    public ControlExecution defineWindowPipe(
+            String name,
+            ScopedRef subscription,
+            ScopedRef outputStore,
+            dev.whitewater.model.PipeOperation operation,
+            ScopedRef emitFeed) {
+        return client.commands(Commands.of().defineWindowPipe(
+                resolve(name),
+                subscription.resolve(this),
+                outputStore.resolve(this),
+                operation,
+                emitFeed == null ? null : emitFeed.resolve(this)));
+    }
+
+    /** {@code SHOW PIPES} rows scoped to this Domain. */
+    public java.util.List<dev.whitewater.model.PipeInfo> pipeInfos() {
+        var prefix = name + ".";
+        var rows = new java.util.ArrayList<dev.whitewater.model.PipeInfo>();
+        for (var info : client.pipes()) {
+            if (info.name().startsWith(prefix)) {
+                rows.add(info);
+            }
+        }
+        return List.copyOf(rows);
+    }
+
+    // ---- StateStores -----------------------------------------------------------
+
+    /** {@link #stateStore(String)} with String keys and payloads of
+     * {@code payloadType}. */
+    public <V> StateStore<String, V> stateStore(String relative, Class<V> payloadType) {
+        return client.stateStore(resolve(relative), payloadType);
+    }
+
+    /** {@link #stateStore(String)} with String keys and a typed payload Codec. */
+    public <V> StateStore<String, V> stateStore(String relative, Codec<V> payloadCodec) {
+        return client.stateStore(resolve(relative), payloadCodec);
+    }
+
+    /** {@link #stateStore(String)} with a typed key class too. */
+    public <K, V> StateStore<K, V> stateStore(
+            String relative, Class<K> keyType, Class<V> payloadType) {
+        return client.stateStore(resolve(relative), keyType, payloadType);
+    }
+
+    /** {@link #stateStore(String)} with explicit key and payload Codecs. */
+    public <K, V> StateStore<K, V> stateStore(
+            String relative, Codec<K> keyCodec, Codec<V> payloadCodec) {
+        return client.stateStore(resolve(relative), keyCodec, payloadCodec);
+    }
+
+    /**
+     * Declare {@code spec} inside this Domain — the spec's name resolves
+     * in-domain. {@code source} names the Feed the store materializes
+     * from (null = manual); a {@link Feed} handle or
+     * {@link Scoped#absolute} sources it across Domains. Returns the
+     * bound store facade.
+     */
+    public StateStore<String, String> defineStateStore(
+            dev.whitewater.model.StateStoreSpec spec, ScopedRef source) {
+        return client.stateStores().define(
+                rescope(spec), source == null ? null : source.resolve(this));
+    }
+
+    /** {@link #defineStateStore(StateStoreSpec, ScopedRef)} with typed
+     * payload binding. */
+    public <K, V> StateStore<K, V> defineStateStore(
+            dev.whitewater.model.StateStoreSpec spec,
+            ScopedRef source,
+            Codec<K> keyCodec,
+            Codec<V> payloadCodec) {
+        return client.stateStores().define(
+                rescope(spec), source == null ? null : source.resolve(this),
+                keyCodec, payloadCodec);
+    }
+
+    /** {@link #defineStateStore(StateStoreSpec, ScopedRef)} with a
+     * plain relative/absolute source string. */
+    public StateStore<String, String> defineStateStore(
+            dev.whitewater.model.StateStoreSpec spec, String source) {
+        return defineStateStore(
+                spec, source == null ? null : Scoped.relative(source));
+    }
+
+    /** {@code DROP STATESTORE <name>} inside this Domain. */
+    public ControlExecution dropStateStore(String relative) {
+        return client.stateStores().drop(resolve(relative));
+    }
+
+    private dev.whitewater.model.StateStoreSpec rescope(
+            dev.whitewater.model.StateStoreSpec spec) {
+        var resolved = dev.whitewater.model.StateStoreSpec.named(resolve(spec.name()));
+        spec.namedKeys().forEach(
+                key -> resolved.addKey(key.name(), key.unique(), key.extractor()));
+        return resolved;
+    }
+
+    // ---- Indexes -----------------------------------------------------------------
+
+    /** Query the replicated Index {@code relative} inside this Domain
+     * by predicate — exact, prefix, or range over typed values. */
+    public dev.whitewater.model.IndexPage queryIndex(
+            String relative,
+            dev.whitewater.model.IndexPredicate predicate,
+            Integer limit,
+            boolean strict,
+            Long waitMs) {
+        return client.queryIndex(resolve(relative), predicate, limit, strict, waitMs);
+    }
+
+    /** {@link #queryIndex} with defaults. */
+    public dev.whitewater.model.IndexPage queryIndex(
+            String relative, dev.whitewater.model.IndexPredicate predicate) {
+        return client.queryIndex(resolve(relative), predicate);
+    }
+
+    /**
+     * The raw byte-level feed client — committed records, anonymous
+     * temporary fetches, and ad-hoc appends by absolute feed name.
+     * The protocol escape hatch under the Domain door; prefer the
+     * bound {@link Feed} handles for application work.
+     */
+    public FeedClient feedOps() {
+        return client.feeds();
+    }
+
+    /**
+     * A {@link Scoped} reference naming a resource inside this Domain —
+     * for Pipe endpoints owned elsewhere, pass a handle from the other
+     * Domain or {@link Scoped#absolute}.
+     */
+    public Scoped scoped(String relative) {
+        return Scoped.absolute(resolve(relative));
     }
 
     /**

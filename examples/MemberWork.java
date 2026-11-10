@@ -26,11 +26,11 @@ public class MemberWork {
                 .apiKey("whitewater-local-development-admin-key")
                 .build();
 
-        client.createDomain("demo");
-        client.createFeed("demo.work");
-        client.createSubscription("demo.audit", "demo.work", ReaderStart.beginning());
+        var demo = client.createDomain("demo");
+        demo.createFeed("work");
+        demo.createSubscription("audit", "work", ReaderStart.beginning());
 
-        var member = client.member("demo.audit");
+        var member = demo.member("audit");
 
         var work = member.claim();
         try {
@@ -47,7 +47,7 @@ public class MemberWork {
         }
 
         // Transfer is for explicit handoff between live members.
-        var peer = client.member("demo.audit");
+        var peer = demo.member("audit");
         var pending = member.claim();
         member.transfer(pending, peer, 60);
         System.out.println("work handed to " + peer.memberId());

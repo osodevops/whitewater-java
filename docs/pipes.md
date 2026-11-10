@@ -28,7 +28,11 @@ Every name in this guide is a dotted name scoped to a **Domain**:
 Domain handle composes names for you — `ops.resolve(relative)`
 produces the full wire name `Commands.of()` asks for, while
 `ops.feed(...)`, `ops.pipe(...)`, and `ops.stateStore(...)` bind typed
-handles directly:
+handles directly. Pipe *endpoints* can also cross Domains deliberately —
+a `ScopedRef` (a `Feed`/`StateStore`/`SubscriptionRef` handle from
+another Domain, or `Scoped.absolute("other.name")`) carries its full
+dotted name; plain strings and `Scoped.relative` resolve in the
+declaring Domain:
 
 ```java
 var ops = client.getDomain("ops");
@@ -56,12 +60,9 @@ input through. Declare one per Pipe (sharing a Subscription across Pipes
 shares its frontier):
 
 ```java
-import dev.whitewater.admin.Commands;
 import dev.whitewater.model.ReaderStart;
 
-client.commands(Commands.of()
-        .createSubscription("orders.sub", ops.feed("orders").name(),
-                ReaderStart.beginning()));
+ops.createSubscription("orders.sub", "orders", ReaderStart.beginning());
 ```
 
 A Subscription can also cover a whole Domain (every Feed in it, present
@@ -79,10 +80,10 @@ one up front (manual or feed-sourced — see `docs/stores.md`):
 import dev.whitewater.model.Extractor;
 import dev.whitewater.model.StateStoreSpec;
 
-var spec = StateStoreSpec.named(ops.resolve("customers"))
+var spec = StateStoreSpec.named("customers")
         .addKey("email", true, Extractor.json("$.email"))
         .addKey("tier", false, Extractor.json("$.tier"));
-client.stateStores().define(spec, ops.resolve("customer.changes")); // feed-sourced
+ops.defineStateStore(spec, ops.feed("customer.changes")); // feed-sourced
 ```
 
 ## 2. Forward pipes
@@ -92,11 +93,26 @@ key, payload, and metadata intact. New cursor and ingest time on the
 output side; the durable frontier advances on the Subscription.
 
 ```java
-client.commands(Commands.of()
-        .defineForwardPipe(
-                ops.resolve("orders.relay"),   // pipe name — ops.orders.relay
-                "orders.sub",                  // source subscription
-                ops.resolve("orders.relayed"))); // output feed
+ops.defineForwardPipe(
+        "orders.relay",                   // pipe name — ops.orders.relay
+        Scoped.relative("orders.sub"),    // source subscription — ops.orders.sub
+        ops.feed("orders.relayed"));      // output feed
+```
+
+The all-`String` form resolves every endpoint in the declaring Domain
+(`ops.defineForwardPipe("orders.relay", "orders.sub", "orders.relayed")`
+is identical here). To point an endpoint *across* Domains — say, relay
+purchasing orders into the warehouse — hand it a handle or an explicit
+absolute reference (see
+[examples/CrossDomain.java](../examples/CrossDomain.java)):
+
+```java
+var warehouse = client.domain("warehouse");
+warehouse.createFeed("inbound");
+ops.defineForwardPipe("orders.relay",
+        Scoped.relative("orders.sub"),
+        warehouse.feed("inbound"));      // writes warehouse.inbound
+// or: Scoped.absolute("warehouse.inbound")
 ```
 
 ## 3. Enrich pipes
@@ -110,17 +126,17 @@ journal — replayed outputs are byte-identical.
 ```java
 import dev.whitewater.model.PipeOperation;
 
-client.commands(Commands.of().defineEnrichPipe(
-        ops.resolve("orders.enrich"),   // ops.orders.enrich
-        "orders.sub",
-        ops.resolve("enriched"),        // output feed
-        ops.resolve("customers"),       // lookup store
+ops.defineEnrichPipe(
+        "orders.enrich",                // ops.orders.enrich
+        Scoped.relative("orders.sub"),
+        ops.feed("enriched"),           // output feed
+        ops.stateStore("customers"),    // lookup store — any Domain's handle works
         PipeOperation.enrich(
                 Extractor.json("$.customerId"),   // project record -> store key
                 EnrichFreshness.LATEST,           // LATEST or STRICT
                 "email",                          // named key to hit (null = primary)
                 EnrichMiss.FORWARD),              // or QUARANTINE
-        ops.resolve("enrich.misses")));   // quarantine feed (required if QUARANTINE)
+        ops.feed("enrich.misses"));     // quarantine feed (required if QUARANTINE)
 ```
 
 - `Extractor` — `recordKey()`, `metadata(name)`, or `json(field)`
@@ -146,15 +162,16 @@ without knowing composite row keys.
 ```java
 import dev.whitewater.model.NamedKey;
 
-client.commands(Commands.of()
+ops.defineStateStore(
         // Pane view: 'key' and 'pane' are required, non-unique.
-        .defineStateStore(ops.resolve("order.counts"), null, List.of(
-                new NamedKey("key", false),
-                new NamedKey("pane", false)))
-        .defineWindowPipe(
-        ops.resolve("orders.hourly"),     // the pipe — ops.orders.hourly
-        "orders.sub",
-        ops.resolve("order.counts"),      // output store (declared above)
+        StateStoreSpec.named("order.counts")
+                .addKey("key", false)
+                .addKey("pane", false),
+        (String) null);
+ops.defineWindowPipe(
+        "orders.hourly",                  // the pipe — ops.orders.hourly
+        Scoped.relative("orders.sub"),
+        ops.stateStore("order.counts"),   // output store (declared above)
         PipeOperation.window(
                 Time.h(1),                             // 1h panes
                 Extractor.json("$.region"),            // window key
@@ -164,7 +181,7 @@ client.commands(Commands.of()
                 Time.d(1),                             // expire: keep panes 24h
                 10_000L,                               // keyLimit
                 null),                                 // byteLimit
-        ops.resolve("hourly.emits")));   // emit feed (optional)
+        ops.feed("hourly.emits"));        // emit feed (optional)
 ```
 
 Every duration a pipe declares is a `Time` — `Time.h`, `Time.m`,
@@ -212,14 +229,14 @@ WindowAggregation.average(Extractor.json("$.rtt")) // running mean
 ## 5. Lifecycle
 
 ```java
-var pipe = ops.pipe("orders.relay");      // = client.pipe("ops.orders.relay")
+var pipe = ops.pipe("orders.relay");      // lifecycle handle on ops.orders.relay
 
 PipeInfo info = pipe.describe();  // stage, operation, outputs, status
 pipe.pause();                     // cooperative: in-flight effects finish
 pipe.resume();                    // restarts from the durable frontier
 pipe.drop();                      // retires declaration + compute lease
 
-List<PipeInfo> all = client.pipes();
+List<PipeInfo> all = ops.pipeInfos();
 ```
 
 `pause` is durable and idempotent — the frontier stays put so resume is
@@ -241,7 +258,8 @@ demand.rows().forEach(r ->
 
 - Declarations are **committed atomically** through the command batch —
   `client.commands(Commands.of().createSubscription(...).defineForwardPipe(...))`
-  applies both or neither.
+  applies both or neither (the `Commands` builder takes fully-qualified
+  names — `ops.resolve(...)` composes them).
 - Pipe delivery is **at-least-once** on the Subscription; effects journal
   lookups/accumulation so replayed outputs are byte-identical.
 - A paused pipe keeps its durable frontier; nothing is dropped.

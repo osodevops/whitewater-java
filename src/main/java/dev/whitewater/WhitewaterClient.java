@@ -30,7 +30,8 @@ import java.util.function.Consumer;
  *         .endpoints(URI.create("http://localhost:7071"))
  *         .apiKey(System.getenv("WHITEWATER_API_KEY"))
  *         .build();
- * var writer = client.writer("orders.checkout");
+ * var orders = client.createDomain("shop");
+ * var writer = orders.feed("orders").writer("checkout");   // shop.checkout
  * var result = writer.append("order-1", "{\"total\":42}");
  * }</pre>
  */
@@ -153,13 +154,22 @@ public final class WhitewaterClient implements AutoCloseable {
     // and executes it. Names are validated before interpolation, so a bad value
     // fails locally rather than reaching the Control Plane.
 
-    /** {@code CREATE DOMAIN <name>} */
-    public ControlExecution createDomain(String name) {
-        return wcl("CREATE DOMAIN " + dotted(name));
+    /**
+     * {@code CREATE DOMAIN <name>} — returns the {@link Domain} handle,
+     * the only front door to Feeds, Writers, Readers, Subscriptions,
+     * StateStores, Indexes, and Pipes:
+     * <pre>{@code
+     * var pipes = client.createDomain("pipes");
+     * pipes.createFeed("orders");          // CREATE FEED pipes.orders
+     * }</pre>
+     */
+    public Domain createDomain(String name) {
+        wcl("CREATE DOMAIN " + dotted(name));
+        return domain(name);
     }
 
     /** {@code CREATE FEED <dotted.name>} */
-    public ControlExecution createFeed(String name) {
+    ControlExecution createFeed(String name) {
         return wcl("CREATE FEED " + dotted(name));
     }
 
@@ -169,7 +179,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@code SET SCHEMA ON FEED <feed>} — overrides the named sides. */
-    public ControlExecution setFeedSchema(String feed, dev.whitewater.model.FeedSchema schema) {
+    ControlExecution setFeedSchema(String feed, dev.whitewater.model.FeedSchema schema) {
         return commands(Commands.of().setFeedSchema(feed, schema));
     }
 
@@ -179,33 +189,33 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@code DROP SCHEMA ON FEED <feed>} — reverts to Domain inheritance. */
-    public ControlExecution clearFeedSchema(String feed) {
+    ControlExecution clearFeedSchema(String feed) {
         return commands(Commands.of().clearFeedSchema(feed));
     }
 
     /** {@code CREATE WRITER <name> TO <feed>} */
-    public ControlExecution createWriter(String name, String feed) {
+    ControlExecution createWriter(String name, String feed) {
         return wcl("CREATE WRITER " + resource(name) + " TO " + dotted(feed));
     }
 
     /** {@code CREATE READER <name> FROM <feed>} — starts at BEGINNING. */
-    public ControlExecution createReader(String name, String feed) {
+    ControlExecution createReader(String name, String feed) {
         return createReader(name, feed, ReaderStart.beginning());
     }
 
     /** {@code CREATE READER <name> FROM <feed> START AT <start>} */
-    public ControlExecution createReader(String name, String feed, ReaderStart start) {
+    ControlExecution createReader(String name, String feed, ReaderStart start) {
         return wcl("CREATE READER " + resource(name) + " FROM " + dotted(feed)
                 + " START AT " + start.wcl());
     }
 
     /** {@code CREATE SUBSCRIPTION <name> FROM <feed>} — starts at BEGINNING. */
-    public ControlExecution createSubscription(String name, String feed) {
+    ControlExecution createSubscription(String name, String feed) {
         return createSubscription(name, feed, ReaderStart.beginning());
     }
 
     /** {@code CREATE SUBSCRIPTION <name> FROM <feed> START AT <start>} */
-    public ControlExecution createSubscription(String name, String feed, ReaderStart start) {
+    ControlExecution createSubscription(String name, String feed, ReaderStart start) {
         return wcl("CREATE SUBSCRIPTION " + resource(name) + " FROM " + dotted(feed)
                 + " START AT " + start.wcl());
     }
@@ -216,12 +226,12 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@code OPEN WRITER SESSION <name>}; the returned epoch feeds {@link #writer}. */
-    public ControlExecution openWriterSession(String writer) {
+    ControlExecution openWriterSession(String writer) {
         return wcl("OPEN WRITER SESSION " + resource(writer));
     }
 
     /** {@code SEEK READER <name> TO <start>} — repositions a durable Reader. */
-    public ControlExecution seekReader(String reader, ReaderStart start) {
+    ControlExecution seekReader(String reader, ReaderStart start) {
         return wcl("SEEK READER " + resource(reader) + " TO " + start.wcl());
     }
 
@@ -230,19 +240,19 @@ public final class WhitewaterClient implements AutoCloseable {
         return describe("DOMAIN", name, true);
     }
 
-    public ControlExecution describeFeed(String name) {
+    ControlExecution describeFeed(String name) {
         return describe("FEED", name, true);
     }
 
-    public ControlExecution describeWriter(String name) {
+    ControlExecution describeWriter(String name) {
         return describe("WRITER", name, false);
     }
 
-    public ControlExecution describeReader(String name) {
+    ControlExecution describeReader(String name) {
         return describe("READER", name, false);
     }
 
-    public ControlExecution describeSubscription(String name) {
+    ControlExecution describeSubscription(String name) {
         return describe("SUBSCRIPTION", name, false);
     }
 
@@ -255,19 +265,19 @@ public final class WhitewaterClient implements AutoCloseable {
         return rename("DOMAIN", current, renamed, true);
     }
 
-    public ControlExecution renameFeed(String current, String renamed) {
+    ControlExecution renameFeed(String current, String renamed) {
         return rename("FEED", current, renamed, true);
     }
 
-    public ControlExecution renameWriter(String current, String renamed) {
+    ControlExecution renameWriter(String current, String renamed) {
         return rename("WRITER", current, renamed, false);
     }
 
-    public ControlExecution renameReader(String current, String renamed) {
+    ControlExecution renameReader(String current, String renamed) {
         return rename("READER", current, renamed, false);
     }
 
-    public ControlExecution renameSubscription(String current, String renamed) {
+    ControlExecution renameSubscription(String current, String renamed) {
         return rename("SUBSCRIPTION", current, renamed, false);
     }
 
@@ -280,19 +290,19 @@ public final class WhitewaterClient implements AutoCloseable {
         return drop("DOMAIN", name, true);
     }
 
-    public ControlExecution dropFeed(String name) {
+    ControlExecution dropFeed(String name) {
         return drop("FEED", name, true);
     }
 
-    public ControlExecution dropWriter(String name) {
+    ControlExecution dropWriter(String name) {
         return drop("WRITER", name, false);
     }
 
-    public ControlExecution dropReader(String name) {
+    ControlExecution dropReader(String name) {
         return drop("READER", name, false);
     }
 
-    public ControlExecution dropSubscription(String name) {
+    ControlExecution dropSubscription(String name) {
         return drop("SUBSCRIPTION", name, false);
     }
 
@@ -305,19 +315,19 @@ public final class WhitewaterClient implements AutoCloseable {
         return show("DOMAINS");
     }
 
-    public ControlExecution listFeeds() {
+    ControlExecution listFeeds() {
         return show("FEEDS");
     }
 
-    public ControlExecution listWriters() {
+    ControlExecution listWriters() {
         return show("WRITERS");
     }
 
-    public ControlExecution listReaders() {
+    ControlExecution listReaders() {
         return show("READERS");
     }
 
-    public ControlExecution listSubscriptions() {
+    ControlExecution listSubscriptions() {
         return show("SUBSCRIPTIONS");
     }
 
@@ -329,15 +339,15 @@ public final class WhitewaterClient implements AutoCloseable {
         return show("GRANTS");
     }
 
-    public ControlExecution listPipes() {
+    ControlExecution listPipes() {
         return show("PIPES");
     }
 
-    public ControlExecution listIndexes() {
+    ControlExecution listIndexes() {
         return show("INDEXES");
     }
 
-    public ControlExecution listStateStores() {
+    ControlExecution listStateStores() {
         return show("STATESTORES");
     }
 
@@ -390,7 +400,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** Ad-hoc Feed operations: committed reads, temporary fetches, appends. */
-    public FeedClient feeds() {
+    FeedClient feeds() {
         return new FeedClient(transport, executor);
     }
 
@@ -402,14 +412,14 @@ public final class WhitewaterClient implements AutoCloseable {
      * {@link dev.whitewater.model.Codec}s so the SDK serializes
      * keys/payloads for you in both directions:
      * <pre>{@code
-     * Feed<String, Order> orders = client.feed("orders.events", Order.class);
+     * Feed<String, Order> orders = domain.feed("orders.events", Order.class);
      * orders.writer("orders.ingest").append("order-1", order);   // encoded
      * try (var reader = orders.reader("orders.audit", 64)) {
      *     Order o = reader.fetch().records().get(0).value();      // decoded
      * }
      * }</pre>
      */
-    public Feed<String, String> feed(String name) {
+    Feed<String, String> feed(String name) {
         return Feed.bound(this, name,
                 dev.whitewater.model.Codecs.utf8(), dev.whitewater.model.Codecs.utf8());
     }
@@ -420,17 +430,17 @@ public final class WhitewaterClient implements AutoCloseable {
      * {@link com.fasterxml.jackson.databind.JsonNode}, or any
      * Jackson-mapped class.
      */
-    public <V> Feed<String, V> feed(String name, Class<V> valueType) {
+    <V> Feed<String, V> feed(String name, Class<V> valueType) {
         return feed(name, dev.whitewater.model.Codecs.forClass(valueType));
     }
 
     /** {@link #feed(String)} with String keys and a typed payload Codec. */
-    public <V> Feed<String, V> feed(String name, dev.whitewater.model.Codec<V> valueCodec) {
+    <V> Feed<String, V> feed(String name, dev.whitewater.model.Codec<V> valueCodec) {
         return Feed.bound(this, name, dev.whitewater.model.Codecs.utf8(), valueCodec);
     }
 
     /** {@link #feed(String, Class)} with a typed key class too. */
-    public <K, V> Feed<K, V> feed(String name, Class<K> keyType, Class<V> valueType) {
+    <K, V> Feed<K, V> feed(String name, Class<K> keyType, Class<V> valueType) {
         return feed(
                 name,
                 dev.whitewater.model.Codecs.forClass(keyType),
@@ -438,7 +448,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@link #feed(String)} with explicit key and payload Codecs. */
-    public <K, V> Feed<K, V> feed(
+    <K, V> Feed<K, V> feed(
             String name, dev.whitewater.model.Codec<K> keyCodec, dev.whitewater.model.Codec<V> valueCodec) {
         return Feed.bound(this, name, keyCodec, valueCodec);
     }
@@ -448,7 +458,7 @@ public final class WhitewaterClient implements AutoCloseable {
     // prefixes (shop owns shop.orders). The strongly-typed entry point:
     //
     //   Domain shop = client.domain("shop");
-    //   var reader = client.createReader(shop, shop.getFeed("orders"))
+    //   var reader = shop.createReader("orders")
     //           .readerId("fulfillment")
     //           .readerStartPoint(ReaderStart.Beginning)
     //           .open();
@@ -475,13 +485,13 @@ public final class WhitewaterClient implements AutoCloseable {
      * {@code feed} inside {@code domain} — see {@link ReaderBuilder}.
      * The feed must live under the Domain's prefix.
      */
-    public <K, V> ReaderBuilder<K, V> createReader(Domain domain, Feed<K, V> feed) {
+    <K, V> ReaderBuilder<K, V> createReader(Domain domain, Feed<K, V> feed) {
         requireOwnedFeed(domain, feed.name());
         return new ReaderBuilder<>(this, feed);
     }
 
     /** {@link #createReader(Domain, Feed)} by relative Feed name. */
-    public ReaderBuilder<String, String> createReader(Domain domain, String feed) {
+    ReaderBuilder<String, String> createReader(Domain domain, String feed) {
         return createReader(domain, domain.feed(feed));
     }
 
@@ -489,13 +499,13 @@ public final class WhitewaterClient implements AutoCloseable {
      * Fluent declaration + session-open of a durable named Writer on
      * {@code feed} inside {@code domain} — see {@link WriterBuilder}.
      */
-    public <K, V> WriterBuilder<K, V> createWriter(Domain domain, Feed<K, V> feed) {
+    <K, V> WriterBuilder<K, V> createWriter(Domain domain, Feed<K, V> feed) {
         requireOwnedFeed(domain, feed.name());
         return new WriterBuilder<>(this, feed);
     }
 
     /** {@link #createWriter(Domain, Feed)} by relative Feed name. */
-    public WriterBuilder<String, String> createWriter(Domain domain, String feed) {
+    WriterBuilder<String, String> createWriter(Domain domain, String feed) {
         return createWriter(domain, domain.feed(feed));
     }
 
@@ -514,7 +524,7 @@ public final class WhitewaterClient implements AutoCloseable {
      * request identities — {@code writer.append(key, payload)} needs no
      * plumbing. This is the surface applications should use.
      */
-    public Writer writer(String name) {
+    Writer writer(String name) {
         return new Writer(transport, executor, name).open();
     }
 
@@ -524,7 +534,7 @@ public final class WhitewaterClient implements AutoCloseable {
      * #writer(String)}; this form is for callers managing session state
      * themselves.
      */
-    public WriterSessionClient writerSession(String writer, long sessionEpoch) {
+    WriterSessionClient writerSession(String writer, long sessionEpoch) {
         return new WriterSessionClient(transport, executor, writer, sessionEpoch);
     }
 
@@ -534,12 +544,12 @@ public final class WhitewaterClient implements AutoCloseable {
      * {@link #writerSession(String, long)} (explicit epoch).
      */
     @Deprecated
-    public WriterSessionClient writer(String writer, long sessionEpoch) {
+    WriterSessionClient writer(String writer, long sessionEpoch) {
         return writerSession(writer, sessionEpoch);
     }
 
     /** A named-Reader session facade under an explicit epoch. */
-    public ReaderSessionClient readerSession(String reader) {
+    ReaderSessionClient readerSession(String reader) {
         return new ReaderSessionClient(transport, executor, reader);
     }
 
@@ -548,7 +558,7 @@ public final class WhitewaterClient implements AutoCloseable {
      * tracks the delivered Cursor for {@link Reader#ack()}.
      */
     @SuppressWarnings("resource")
-    public Reader reader(String name, int capacity) {
+    Reader reader(String name, int capacity) {
         return new Reader(transport, executor, name).open(capacity);
     }
 
@@ -558,12 +568,12 @@ public final class WhitewaterClient implements AutoCloseable {
      * {@link #readerSession(String)} (explicit epoch).
      */
     @Deprecated
-    public ReaderSessionClient reader(String reader) {
+    ReaderSessionClient reader(String reader) {
         return readerSession(reader);
     }
 
     /** A cooperating member of a named Subscription (raw epoch plumbing). */
-    public SubscriptionMemberClient subscriptionMember(String subscription) {
+    SubscriptionMemberClient subscriptionMember(String subscription) {
         return new SubscriptionMemberClient(transport, subscription);
     }
 
@@ -573,12 +583,12 @@ public final class WhitewaterClient implements AutoCloseable {
      * {@code member.claim() → fetch → ack → release} with no epoch
      * threading. The surface application workers should use.
      */
-    public Member member(String subscription) {
+    Member member(String subscription) {
         return new Member(transport, subscription).join();
     }
 
     /** A session-bound member under an explicit identity (crash-recovery). */
-    public Member member(String subscription, java.util.UUID memberId) {
+    Member member(String subscription, java.util.UUID memberId) {
         return new Member(transport, subscription).join(memberId);
     }
 
@@ -592,7 +602,7 @@ public final class WhitewaterClient implements AutoCloseable {
      * seeks and {@code cursor} (an opaque record Cursor) for cursor
      * seeks, which resolve only on a single-range source.
      */
-    public dev.whitewater.model.SeekResult seekSubscription(
+    dev.whitewater.model.SeekResult seekSubscription(
             String subscription,
             String position,
             Long timestampNs,
@@ -601,7 +611,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@link #seekSubscription} under an explicit request identity — replays idempotently. */
-    public dev.whitewater.model.SeekResult seekSubscription(
+    dev.whitewater.model.SeekResult seekSubscription(
             String subscription,
             String position,
             Long timestampNs,
@@ -621,7 +631,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** A Subscription's authoritative member state — epochs and live leases. */
-    public dev.whitewater.model.MemberState subscriptionMemberState(String subscription) {
+    dev.whitewater.model.MemberState subscriptionMemberState(String subscription) {
         String path = "/v1/subscriptions/members/state?subscription="
                 + java.net.URLEncoder.encode(subscription, java.nio.charset.StandardCharsets.UTF_8);
         return Wire.memberState(transport.get(path));
@@ -634,7 +644,7 @@ public final class WhitewaterClient implements AutoCloseable {
      * ({@code waitMs}) for the serving Node's applied frontier to cover
      * the committed target rather than answering stale.
      */
-    public dev.whitewater.model.IndexPage queryIndex(
+    dev.whitewater.model.IndexPage queryIndex(
             String index,
             dev.whitewater.model.IndexPredicate predicate,
             Integer limit,
@@ -654,7 +664,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@link #queryIndex} with defaults. */
-    public dev.whitewater.model.IndexPage queryIndex(
+    dev.whitewater.model.IndexPage queryIndex(
             String index, dev.whitewater.model.IndexPredicate predicate) {
         return queryIndex(index, predicate, null, false, null);
     }
@@ -686,12 +696,12 @@ public final class WhitewaterClient implements AutoCloseable {
      * reports the live catalog row while {@code pause}/{@code resume}/
      * {@code drop} drive the same typed commands WCL lowers to.
      */
-    public Pipe pipe(String name) {
+    Pipe pipe(String name) {
         return Pipe.bind(this, name);
     }
 
     /** {@code SHOW PIPES} decoded as {@link dev.whitewater.model.PipeInfo} rows. */
-    public java.util.List<dev.whitewater.model.PipeInfo> pipes() {
+    java.util.List<dev.whitewater.model.PipeInfo> pipes() {
         return Pipe.list(this);
     }
 
@@ -750,7 +760,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** A Subscription's committed-progress view (for operators). */
-    public JsonNode subscriptionProgress(String name) {
+    JsonNode subscriptionProgress(String name) {
         String path = "/v1/admin/subscriptions/progress?name="
                 + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8);
         return transport.get(path);
@@ -775,7 +785,7 @@ public final class WhitewaterClient implements AutoCloseable {
      * }
      * }</pre>
      */
-    public Subscription subscribe(
+    Subscription subscribe(
             String reader,
             String feed,
             ReaderStart start,
@@ -785,7 +795,7 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@link #subscribe} with an explicit page capacity. */
-    public Subscription subscribe(
+    Subscription subscribe(
             String reader,
             String feed,
             ReaderStart start,
@@ -799,7 +809,7 @@ public final class WhitewaterClient implements AutoCloseable {
         return subscription;
     }
 
-    public Subscription subscribe(
+    Subscription subscribe(
             String reader,
             String feed,
             ReaderStart start,
@@ -817,12 +827,12 @@ public final class WhitewaterClient implements AutoCloseable {
      * serializes keys/payloads for you:
      * <pre>{@code
      * StateStore<String, User> users =
-     *         client.stateStore("app.users", User.class);   // just the class
+     *         domain.stateStore("users", User.class);       // just the class
      * users.put("user-1", user);
      * User back = users.get("user-1").payload();   // no getBytes anywhere
      * }</pre>
      */
-    public StateStore<String, String> stateStore(String name) {
+    StateStore<String, String> stateStore(String name) {
         return StateStore.defaults(transport, name);
     }
 
@@ -832,17 +842,17 @@ public final class WhitewaterClient implements AutoCloseable {
      * {@link com.fasterxml.jackson.databind.JsonNode}, or any
      * Jackson-mapped class.
      */
-    public <V> StateStore<String, V> stateStore(String name, Class<V> payloadType) {
+    <V> StateStore<String, V> stateStore(String name, Class<V> payloadType) {
         return stateStore(name, dev.whitewater.model.Codecs.forClass(payloadType));
     }
 
     /** {@link #stateStore(String)} with String keys and a typed payload Codec. */
-    public <V> StateStore<String, V> stateStore(String name, dev.whitewater.model.Codec<V> payloadCodec) {
+    <V> StateStore<String, V> stateStore(String name, dev.whitewater.model.Codec<V> payloadCodec) {
         return StateStore.bound(transport, name, dev.whitewater.model.Codecs.utf8(), payloadCodec);
     }
 
     /** {@link #stateStore(String, Class)} with a typed key class too. */
-    public <K, V> StateStore<K, V> stateStore(String name, Class<K> keyType, Class<V> payloadType) {
+    <K, V> StateStore<K, V> stateStore(String name, Class<K> keyType, Class<V> payloadType) {
         return stateStore(
                 name,
                 dev.whitewater.model.Codecs.forClass(keyType),
@@ -850,13 +860,13 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /** {@link #stateStore(String)} with explicit key and payload Codecs. */
-    public <K, V> StateStore<K, V> stateStore(
+    <K, V> StateStore<K, V> stateStore(
             String name, dev.whitewater.model.Codec<K> keyCodec, dev.whitewater.model.Codec<V> payloadCodec) {
         return StateStore.bound(transport, name, keyCodec, payloadCodec);
     }
 
     /** Collection-level StateStore operations: declare, drop. */
-    public StateStoresClient stateStores() {
+    StateStoresClient stateStores() {
         return new StateStoresClient(transport);
     }
 

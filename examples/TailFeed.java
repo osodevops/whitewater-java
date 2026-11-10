@@ -23,12 +23,13 @@ public class TailFeed {
                 .apiKey("whitewater-local-development-admin-key")
                 .build();
 
-        // 1. Provision a domain + feed via WCL (typed commands are for queries
-        //    like {"command": "show", "kind": "feeds"}).
-        client.wcl("CREATE DOMAIN demo; CREATE FEED demo.tail");
+        // 1. Provision a domain + feed — the Domain handle is the only
+        //    front door to Feeds (raw WCL stays available via client.wcl).
+        var demo = client.createDomain("demo");
+        demo.createFeed("tail");
 
         // UTF-8 binding: appended text comes back as text on every fetch.
-        var tail = client.feed("demo.tail", String.class);
+        var tail = demo.feed("tail", String.class);
 
         // 2. Append a record 3s from now so we can watch the tail WAIT, then return.
         new Thread(() -> {

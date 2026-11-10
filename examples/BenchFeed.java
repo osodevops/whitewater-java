@@ -100,10 +100,9 @@ public class BenchFeed {
 
         String suffix = String.valueOf(System.currentTimeMillis());
         String domain = "jbench" + suffix.substring(suffix.length() - 10);
-        String feedName = domain + ".events";
-        client.createDomain(domain);
-        client.createFeed(feedName);
-        Feed<String, byte[]> feed = client.feed(feedName, byte[].class);
+        var d = client.createDomain(domain);
+        d.createFeed("events");
+        Feed<String, byte[]> feed = d.feed("events", byte[].class);
 
         byte[] payload = new byte[bytes];
         for (int i = 0; i < bytes; i++) {

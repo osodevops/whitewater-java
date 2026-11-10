@@ -7,7 +7,7 @@ package dev.whitewater.model;
  *
  * <pre>{@code
  * StateStore<String, User> users =
- *         client.stateStore("app.users", Codecs.utf8(), Codecs.json(User.class));
+ *         domain.stateStore("users", Codecs.utf8(), Codecs.json(User.class));
  * users.put("user-1", new User("matt", "eng"));
  * User back = users.get("user-1").payload();          // decoded, never getBytes
  * }</pre>

@@ -16,7 +16,7 @@ import java.util.UUID;
  * {@code claim → fetch → ack → release}.
  *
  * <pre>{@code
- * var member = client.member("orders.audit");          // joins internally
+ * var member = domain.member("audit");                // orders.audit, joins internally
  * var work = member.claim();                           // epoch-fenced lease
  * var page = member.fetch(work, 64);
  * handle(page.records());

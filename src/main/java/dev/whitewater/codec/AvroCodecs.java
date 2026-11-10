@@ -32,7 +32,7 @@ import java.util.Objects;
  *
  * <pre>{@code
  * StateStore<String, User> users =
- *         client.stateStore("app.users", AvroCodecs.specific(User.class));
+ *         domain.stateStore("users", AvroCodecs.specific(User.class));
  * }</pre>
  */
 public final class AvroCodecs {

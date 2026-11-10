@@ -50,16 +50,18 @@ public class EnrichUsers {
                         "whitewater-local-development-admin-key"))
                 .build();
 
+        var domain = client.getDomain("users");
+
         Feed<String, UpdateRequest> in =
-                client.feed("users.update.request", UpdateRequest.class);
+                domain.feed("update.request", UpdateRequest.class);
         Feed<String, EnrichedUpdate> out =
-                client.feed("users.update.enriched.request", EnrichedUpdate.class);
+                domain.feed("update.enriched.request", EnrichedUpdate.class);
         Feed<String, DeadLetter> dlq =
-                client.feed("users.update.dlq", DeadLetter.class);
+                domain.feed("update.dlq", DeadLetter.class);
         StateStore<String, UserProfile> users =
-                client.stateStore("users.profiles", UserProfile.class);
+                domain.stateStore("profiles", UserProfile.class);
         StateStore<String, Long> counters =
-                client.stateStore("users.stats", Long.class);
+                domain.stateStore("stats", Long.class);
 
         FeedWriter<String, EnrichedUpdate> outWriter = out.writer("enricher");
         FeedWriter<String, DeadLetter> dlqWriter = dlq.writer("enricher");

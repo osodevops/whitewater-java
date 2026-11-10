@@ -266,10 +266,10 @@ public final class Wire {
                         ? UUID.fromString(node.path("index_id").asText()) : null,
                 node.path("generation").asLong(),
                 List.copyOf(rows),
-                node.path("applied_cursor").isNull() ? null
-                        : Cursor.of(node.path("applied_cursor").asText()),
-                node.path("target_cursor").isNull() ? null
-                        : Cursor.of(node.path("target_cursor").asText()),
+                node.path("applied_cursor").isTextual()
+                        ? Cursor.of(node.path("applied_cursor").asText()) : null,
+                node.path("target_cursor").isTextual()
+                        ? Cursor.of(node.path("target_cursor").asText()) : null,
                 node.path("behind").asBoolean(false),
                 node.path("truncated").asBoolean(false),
                 node.path("served_by").asText());

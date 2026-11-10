@@ -19,8 +19,7 @@ var client = WhitewaterClient.builder()
         .build();
 
 // ---- provision -----------------------------------------------------
-client.createDomain("shop");
-var shop = client.getDomain("shop");
+var shop = client.createDomain("shop");   // declares + returns the handle
 shop.createFeed("orders");
 shop.createFeed("orders.dlq");            // dead-letter feed
 
