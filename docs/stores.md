@@ -42,7 +42,7 @@ explicit opt-in for binary data:
 ```java
 // String keys, UTF-8 String payloads (the default):
 StateStore<String, String> store = accounts.stateStore("employees");
-store.put("emp-1", "{\"name\":\"alice\"}", null);   // JSON stays a String
+store.put("emp-1", "{\"name\":\"alice\"}");          // JSON stays a String
 
 // Raw binary — opt in explicitly:
 StateStore<String, byte[]> raw =
@@ -102,18 +102,50 @@ Server-side schema policy (admission validation, compatibility,
 identity) is a Control Plane milestone, not shipped; codec binding is
 the seam it will plug into.
 
-## Writing
+## Writing & `StoreKeySet`
+
+Define a typed `AbstractStoreKeySet` subclass once for your store's secondary keys so every `put` is self-completing, or use inline builders / maps:
 
 ```java
-store.put("emp-1", new Employee("alice", "eng", "P111"), Map.of(
-        "passport", "P111",
-        "department", "eng",
-        "salary", 92000L,
-        "active", true,
-        "badge", new byte[]{1, 2},
-        "note", null));
-store.put("emp-1", employee, null, stableMutationUuid);  // caller-owned idempotency
-store.delete("emp-1");                                    // mutationId auto-generated
+public final class PassportKeySet extends AbstractStoreKeySet {
+    public PassportKeySet setPassport(String v)   { return put("passport", v); }
+    public PassportKeySet setDepartment(String v) { return put("department", v); }
+    public PassportKeySet passport(String v)      { return setPassport(v); }
+    public PassportKeySet department(String v)    { return setDepartment(v); }
+
+    public static PassportKeySet with(String passport, String department) {
+        return new PassportKeySet().setPassport(passport).setDepartment(department);
+    }
+    public static PassportKeySet withPassport(String passport) {
+        return new PassportKeySet().setPassport(passport);
+    }
+    public static PassportKeySet of(Consumer<PassportKeySet> builder) {
+        var ks = new PassportKeySet();
+        builder.accept(ks);
+        return ks;
+    }
+}
+
+// 1A. Static factory one-liner:
+store.put("emp-1", employee, PassportKeySet.with("P123", "eng"));
+
+// 1B. Static starter + fluent chaining:
+store.put("emp-1", employee, PassportKeySet.withPassport("P123").department("eng"));
+
+// 2A. Lambda / anonymous Consumer on the KeySet class:
+store.put("emp-1", employee, PassportKeySet.of(k -> k.passport("P123").department("eng")));
+
+// 2B. Bind the KeySet class onto the store so `k` is typed automatically:
+var keyed = store.withKeySet(PassportKeySet.class);
+keyed.put("emp-1", employee, k -> k.passport("P123").department("eng"));
+
+// 3. Single default String fallback (maps to the store's first declared key):
+store.put("emp-1", employee, employee.passport());
+
+// Raw Map is still supported when you want dynamic keys:
+store.put("emp-1", employee, Map.of("passport", "P111", "department", "eng"));
+store.put("emp-1", employee, (StoreKeySet) null, stableMutationUuid);  // caller-owned idempotency
+store.delete("emp-1");                                                  // mutationId auto-generated
 store.delete("emp-1", stableMutationUuid);
 ```
 

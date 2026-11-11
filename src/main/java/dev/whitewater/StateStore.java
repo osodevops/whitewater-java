@@ -8,7 +8,9 @@ import dev.whitewater.model.Codec;
 import dev.whitewater.model.Codecs;
 import dev.whitewater.model.ControlExecution;
 import dev.whitewater.model.IndexPredicate.IndexBound;
+import dev.whitewater.model.AbstractStoreKeySet;
 import dev.whitewater.model.MutationResult;
+import dev.whitewater.model.StoreKeySet;
 import dev.whitewater.model.StorePage;
 import dev.whitewater.model.StoreRow;
 import dev.whitewater.model.StoreRows;
@@ -54,21 +56,34 @@ import java.util.function.Consumer;
  */
 public final class StateStore<K, V> implements ScopedRef {
 
+    private static final java.util.concurrent.ConcurrentMap<String, String> DECLARED_DEFAULT_KEYS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    static void registerDefaultKey(String storeName, String defaultKey) {
+        if (storeName != null && defaultKey != null && !defaultKey.isBlank()) {
+            DECLARED_DEFAULT_KEYS.put(WhitewaterClient.dottedName(storeName), defaultKey);
+        }
+    }
+
     private final Transport transport;
     private final String name;
     private final Codec<K> keyCodec;
     private final Codec<V> payloadCodec;
+    private final String defaultKey;
 
-    private StateStore(Transport transport, String name, Codec<K> keyCodec, Codec<V> payloadCodec) {
+    private StateStore(
+            Transport transport, String name, Codec<K> keyCodec, Codec<V> payloadCodec, String defaultKey) {
         this.transport = Objects.requireNonNull(transport);
         this.name = name;
         this.keyCodec = Objects.requireNonNull(keyCodec, "keyCodec");
         this.payloadCodec = Objects.requireNonNull(payloadCodec, "payloadCodec");
+        this.defaultKey = defaultKey;
     }
 
     static <K, V> StateStore<K, V> bound(
             Transport transport, String name, Codec<K> keyCodec, Codec<V> payloadCodec) {
-        return new StateStore<>(transport, WhitewaterClient.dottedName(name), keyCodec, payloadCodec);
+        String resolved = WhitewaterClient.dottedName(name);
+        return new StateStore<>(transport, resolved, keyCodec, payloadCodec, DECLARED_DEFAULT_KEYS.get(resolved));
     }
 
     public String name() {
@@ -84,7 +99,36 @@ public final class StateStore<K, V> implements ScopedRef {
 
     /** Rebind the same store under different Codecs — no wire call. */
     public <K2, V2> StateStore<K2, V2> view(Codec<K2> keyCodec, Codec<V2> payloadCodec) {
-        return new StateStore<>(transport, name, keyCodec, payloadCodec);
+        return new StateStore<>(transport, name, keyCodec, payloadCodec, defaultKey);
+    }
+
+    /** Bind the default secondary-key name used by the single-String {@link #put(Object, Object, String)} overload. */
+    public StateStore<K, V> withDefaultKey(String defaultKeyName) {
+        Objects.requireNonNull(defaultKeyName, "defaultKeyName");
+        if (defaultKeyName.isBlank()) {
+            throw new IllegalArgumentException("defaultKeyName must not be blank");
+        }
+        return new StateStore<>(transport, name, keyCodec, payloadCodec, defaultKeyName);
+    }
+
+    /** Bind a typed {@link StoreKeySet} factory so lambda puts infer {@code KS}. */
+    public <KS extends StoreKeySet> Keyed<K, V, KS> withKeySet(java.util.function.Supplier<KS> keySetFactory) {
+        return new Keyed<>(this, Objects.requireNonNull(keySetFactory, "keySetFactory"));
+    }
+
+    /** {@link #withKeySet(java.util.function.Supplier)} using the no-arg constructor of {@code keySetClass}. */
+    public <KS extends StoreKeySet> Keyed<K, V, KS> withKeySet(Class<KS> keySetClass) {
+        Objects.requireNonNull(keySetClass, "keySetClass");
+        return withKeySet(() -> {
+            try {
+                var ctor = keySetClass.getDeclaredConstructor();
+                ctor.setAccessible(true);
+                return ctor.newInstance();
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalArgumentException(
+                        "KeySet class " + keySetClass.getName() + " must have a no-arg constructor", e);
+            }
+        });
     }
 
     /** {@link #view(Codec, Codec)} by classes. */
@@ -117,12 +161,44 @@ public final class StateStore<K, V> implements ScopedRef {
     }
 
     public MutationResult put(K key, V value, Map<String, ?> named) {
-        return put(key, value, named, null);
+        return put(key, value, named, (UUID) null);
+    }
+
+    /** Insert or replace one row with a typed {@link StoreKeySet}. */
+    public MutationResult put(K key, V value, StoreKeySet keys) {
+        return put(key, value, keys, null);
+    }
+
+    /** {@link #put(Object, Object, StoreKeySet)} with an explicit idempotency {@code mutationId}. */
+    public MutationResult put(K key, V value, StoreKeySet keys, UUID mutationId) {
+        return put(key, value, keys == null ? null : keys.toMap(), mutationId);
+    }
+
+    /** Insert or replace one row with an inline {@link Consumer} builder over {@link AbstractStoreKeySet}. */
+    public MutationResult put(K key, V value, Consumer<AbstractStoreKeySet> keyBuilder) {
+        Objects.requireNonNull(keyBuilder, "keyBuilder");
+        return put(key, value, StoreKeySet.of(keyBuilder), null);
+    }
+
+    /** Single-string secondary-key fallback: maps {@code singleSecondaryKey} to the store's first declared named key (or {@link #withDefaultKey(String)}, falling back to {@code "default"}). */
+    public MutationResult put(K key, V value, String singleSecondaryKey) {
+        return put(key, value, singleSecondaryKey, null);
+    }
+
+    /** {@link #put(Object, Object, String)} with an explicit idempotency {@code mutationId}. */
+    public MutationResult put(K key, V value, String singleSecondaryKey, UUID mutationId) {
+        if (singleSecondaryKey == null) {
+            return put(key, value, (Map<String, ?>) null, mutationId);
+        }
+        String keyName = defaultKey != null
+                ? defaultKey
+                : DECLARED_DEFAULT_KEYS.getOrDefault(name, "default");
+        return put(key, value, Map.of(keyName, singleSecondaryKey), mutationId);
     }
 
     /** Put with no named-key postings. */
     public MutationResult put(K key, V value) {
-        return put(key, value, null, null);
+        return put(key, value, (Map<String, ?>) null, null);
     }
 
     /**
@@ -401,5 +477,42 @@ public final class StateStore<K, V> implements ScopedRef {
     /** The default binding: String keys, UTF-8 String payloads. */
     static StateStore<String, String> defaults(Transport transport, String name) {
         return bound(transport, name, Codecs.utf8(), Codecs.utf8());
+    }
+
+    /** A {@link StateStore} view bound to a concrete {@link StoreKeySet} type {@code KS}. */
+    public static final class Keyed<K, V, KS extends StoreKeySet> implements ScopedRef {
+        private final StateStore<K, V> store;
+        private final java.util.function.Supplier<KS> keySetFactory;
+
+        Keyed(StateStore<K, V> store, java.util.function.Supplier<KS> keySetFactory) {
+            this.store = store;
+            this.keySetFactory = keySetFactory;
+        }
+
+        public StateStore<K, V> unwrap() { return store; }
+        public String name() { return store.name(); }
+        @Override public String resolve(Domain domain) { return store.resolve(domain); }
+        public MutationResult put(K key, V value) { return store.put(key, value); }
+        public MutationResult put(K key, V value, KS keys) { return store.put(key, value, keys); }
+        public MutationResult put(K key, V value, KS keys, UUID mutationId) { return store.put(key, value, keys, mutationId); }
+        public MutationResult put(K key, V value, Consumer<KS> builder) { return put(key, value, builder, null); }
+        public MutationResult put(K key, V value, Consumer<KS> builder, UUID mutationId) {
+            Objects.requireNonNull(builder, "builder");
+            KS ks = keySetFactory.get();
+            builder.accept(ks);
+            return store.put(key, value, ks, mutationId);
+        }
+        public MutationResult put(K key, V value, String singleSecondaryKey) { return store.put(key, value, singleSecondaryKey); }
+        public MutationResult put(K key, V value, Map<String, ?> named) { return store.put(key, value, named); }
+        public StoreRow<K, V> get(K key) { return store.get(key); }
+        public StoreRow<K, V> getStrict(K key, Duration wait) { return store.getStrict(key, wait); }
+        public java.util.Optional<V> find(K key) { return store.find(key); }
+        public java.util.Optional<V> findBy(String namedKey, Object value) { return store.findBy(namedKey, value); }
+        public StoreRows<K, V> getBy(String namedKey, Object value) { return store.getBy(namedKey, value); }
+        public StoreRows<K, V> getByStrict(String namedKey, Object value, Duration wait) { return store.getByStrict(namedKey, value, wait); }
+        public MutationResult delete(K key) { return store.delete(key); }
+        public void iterate(Consumer<StoreRow<K, V>> visitor) { store.iterate(visitor); }
+        public MutationResult clear() { return store.clear(); }
+        public ControlExecution drop() { return store.drop(); }
     }
 }

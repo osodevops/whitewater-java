@@ -699,9 +699,9 @@ public final class FakeRiverbed implements AutoCloseable {
                                     .toString())
                             .put("name", entry.getKey())
                             .put("status", "active").put("created_at_ns", 0);
-                    var space = entry.getValue().domain != null
-                            ? domainIds.get(entry.getValue().domain)
-                            : entry.getValue().feed == null ? null : spaceIdOf(entry.getValue().feed);
+                    // space_id is the Domain of the Subscription's own
+                    // name — the source Feed may live in another Domain.
+                    var space = spaceIdOf(entry.getKey());
                     if (space == null) {
                         row.putNull("space_id");
                     } else {

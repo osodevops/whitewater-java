@@ -5,8 +5,11 @@ import com.sun.net.httpserver.HttpServer;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.model.Extractor;
 import dev.whitewater.model.Codecs;
+import dev.whitewater.model.AbstractStoreKeySet;
 import dev.whitewater.model.StateStoreSpec;
+import dev.whitewater.model.StoreKeySet;
 import dev.whitewater.model.StoreRow;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -340,5 +343,78 @@ class StateStoreTest {
         assertEquals("drop", command.get("command").asText());
         assertEquals("state_store", command.get("kind").asText());
         assertEquals("accounts.employees", command.get("name").asText());
+    }
+
+    static final class PassportKeySet extends AbstractStoreKeySet {
+        public PassportKeySet setPassport(String v)   { return put("passport", v); }
+        public PassportKeySet setDepartment(String v) { return put("department", v); }
+        public PassportKeySet passport(String v)      { return setPassport(v); }
+        public PassportKeySet department(String v)    { return setDepartment(v); }
+
+        public static PassportKeySet with(String passport, String department) {
+            return new PassportKeySet().setPassport(passport).setDepartment(department);
+        }
+
+        public static PassportKeySet withPassport(String passport) {
+            return new PassportKeySet().setPassport(passport);
+        }
+
+        public static PassportKeySet of(Consumer<PassportKeySet> builder) {
+            var ks = new PassportKeySet();
+            builder.accept(ks);
+            return ks;
+        }
+    }
+
+    private Map<String, JsonNode> lastNamedMap() throws Exception {
+        JsonNode op = lastBody("/v1/state-stores/mutate").get("op");
+        var named = new java.util.HashMap<String, JsonNode>();
+        op.get("named").forEach(e -> named.put(e.get("name").asText(), e.get("values").get(0)));
+        return named;
+    }
+
+    @Test
+    void storeKeySetSupportsAllInlineStylesAndSingleStringFallback() throws Exception {
+        var spec = StateStoreSpec.named("accounts.employees")
+                .addKey("passport", true)
+                .addKey("department");
+        var store = client.stateStores().define(spec, null);
+
+        // 1A: Static factory PassportKeySet.with("P123", "eng")
+        store.put("emp-1", "alice", PassportKeySet.with("P123", "eng"));
+        var n1 = lastNamedMap();
+        assertEquals("P123", n1.get("passport").get("value").asText());
+        assertEquals("eng", n1.get("department").get("value").asText());
+
+        // 1B: Static starter into fluent chaining
+        store.put("emp-2", "bob", PassportKeySet.withPassport("P222").department("ops"));
+        var n2 = lastNamedMap();
+        assertEquals("P222", n2.get("passport").get("value").asText());
+        assertEquals("ops", n2.get("department").get("value").asText());
+
+        // 2A: Lambda on KeySet class
+        store.put("emp-3", "cara", PassportKeySet.of(k -> k.passport("P333").department("eng")));
+        var n3 = lastNamedMap();
+        assertEquals("P333", n3.get("passport").get("value").asText());
+        assertEquals("eng", n3.get("department").get("value").asText());
+
+        // 2B: Store typed with KeySet class via withKeySet
+        var keyed = store.withKeySet(PassportKeySet.class);
+        keyed.put("emp-4", "dan", k -> k.passport("P444").department("sales"));
+        var n4 = lastNamedMap();
+        assertEquals("P444", n4.get("passport").get("value").asText());
+        assertEquals("sales", n4.get("department").get("value").asText());
+
+        // 3: Single default String fallback -> maps to first declared key ("passport")
+        store.put("emp-5", "eve", "P555");
+        var n5 = lastNamedMap();
+        assertEquals("P555", n5.get("passport").get("value").asText());
+        assertEquals(1, n5.size());
+
+        // StoreKeySet.of static helpers
+        store.put("emp-6", "frank", StoreKeySet.of("passport", "P666", "department", "qa"));
+        var n6 = lastNamedMap();
+        assertEquals("P666", n6.get("passport").get("value").asText());
+        assertEquals("qa", n6.get("department").get("value").asText());
     }
 }

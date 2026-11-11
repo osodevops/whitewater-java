@@ -22,7 +22,7 @@ package dev.whitewater;
  * implement this interface and carry the fully-qualified name they were
  * bound under.
  */
-public sealed interface ScopedRef permits Scoped, Feed, StateStore, SubscriptionRef {
+public sealed interface ScopedRef permits Scoped, Feed, StateStore, StateStore.Keyed, SubscriptionRef {
 
     /** Resolve this reference under {@code domain} — an absolute
      * reference returns its bound name verbatim; a relative

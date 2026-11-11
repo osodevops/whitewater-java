@@ -92,6 +92,9 @@ public final class StateStoresClient {
         });
         commands.add(command);
         Wire.controlExecution(transport.post("/v1/admin/commands", body));
+        if (!spec.namedKeys().isEmpty()) {
+            StateStore.registerDefaultKey(spec.name(), spec.namedKeys().get(0).name());
+        }
         @SuppressWarnings("unchecked")
         Codec<K> keys = keyCodec != null ? keyCodec : (Codec<K>) dev.whitewater.model.Codecs.utf8();
         @SuppressWarnings("unchecked")
