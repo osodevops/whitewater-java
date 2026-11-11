@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpServer;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.model.Extractor;
+import dev.whitewater.model.IndexPredicate.IndexBound;
 import dev.whitewater.model.Codecs;
 import dev.whitewater.model.AbstractStoreKeySet;
 import dev.whitewater.model.StateStoreSpec;
@@ -19,6 +20,7 @@ import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -311,6 +313,33 @@ class StateStoreTest {
         assertEquals("text", sent.get("values").get(0).get("kind").asText());
         assertEquals("eng", sent.get("values").get(0).get("value").asText());
         assertEquals(50, sent.get("limit").asInt());
+    }
+
+    @Test
+    void getByRangeOverloadPostsBoundsWithoutNullTail() throws Exception {
+        var store = client.stateStore("accounts.employees", Codecs.utf8());
+        var result = store.getBy("department", "eng",
+                IndexBound.inclusive(100L), IndexBound.exclusive(200L), 25);
+        assertEquals(2, result.rows().size());
+        JsonNode sent = lastBody("/v1/state-stores/get-by");
+        assertEquals("i64", sent.get("lower").get("value").get("kind").asText());
+        assertEquals(100, sent.get("lower").get("value").get("value").asLong());
+        assertTrue(sent.get("lower").get("inclusive").asBoolean());
+        assertFalse(sent.get("upper").get("inclusive").asBoolean());
+        assertEquals(200, sent.get("upper").get("value").get("value").asLong());
+        assertEquals(25, sent.get("limit").asInt());
+        assertFalse(sent.get("strict").asBoolean());
+    }
+
+    @Test
+    void getByStrictRangeOverloadPostsWaitMillis() throws Exception {
+        var store = client.stateStore("accounts.employees", Codecs.utf8());
+        store.getByStrict("department", "eng",
+                IndexBound.inclusive(0L), IndexBound.exclusive(50L), Duration.ofMillis(750));
+        JsonNode sent = lastBody("/v1/state-stores/get-by");
+        assertTrue(sent.get("strict").asBoolean());
+        assertEquals(750, sent.get("wait_ms").asLong());
+        assertTrue(sent.get("lower").get("inclusive").asBoolean());
     }
 
     @Test

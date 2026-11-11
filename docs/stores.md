@@ -176,6 +176,10 @@ var fresh = store.getStrict("emp-1");               // bounded-waits for the com
 var result = store.getBy("department", "eng");
 result.rows();                                       // every match
 result.freshness().servedBy();                       // which Node answered
+
+var range = store.getBy("department", "eng",
+        IndexBound.inclusive(100), IndexBound.exclusive(200), 25);
+var fresh = store.getByStrict("department", "eng", Duration.ofSeconds(5));
 ```
 
 `freshness()` is **evidence, not a required step**: appliedSeq /

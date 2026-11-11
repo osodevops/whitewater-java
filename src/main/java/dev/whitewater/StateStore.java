@@ -302,6 +302,28 @@ public final class StateStore<K, V> implements ScopedRef {
     }
 
     /**
+     * {@link #getBy(String, Object)} bounded to a posting range —
+     * {@code lower}/{@code upper} are inclusive/exclusive {@link IndexBound}s,
+     * like an Index range predicate.
+     */
+    public StoreRows<K, V> getBy(String namedKey, Object value,
+                                 IndexBound lower, IndexBound upper) {
+        return getBy(namedKey, value, lower, upper, null, false, null);
+    }
+
+    /** {@link #getBy(String, Object, IndexBound, IndexBound)} bounded to {@code limit} rows. */
+    public StoreRows<K, V> getBy(String namedKey, Object value,
+                                 IndexBound lower, IndexBound upper, Integer limit) {
+        return getBy(namedKey, value, lower, upper, limit, false, null);
+    }
+
+    /** {@link #getBy(String, Object, IndexBound, IndexBound)} that bounded-waits for freshness. */
+    public StoreRows<K, V> getByStrict(String namedKey, Object value,
+                                       IndexBound lower, IndexBound upper, Duration wait) {
+        return getBy(namedKey, value, lower, upper, null, true, wait.toMillis());
+    }
+
+    /**
      * Bounded named-key lookup: {@code lower}/{@code upper} bound the
      * posting range the lookup scans (inclusive/exclusive), like an
      * Index range predicate.
