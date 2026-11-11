@@ -54,8 +54,8 @@ public class WorkWithStores {
         //    secondary keys at creation. The spec name resolves in-domain.
         var accounts = client.createDomain("accounts");
         var spec = StateStoreSpec.named("employees")
-                .addKey("passport", true)                    // unique (default key)
-                .addKey("department");                       // non-unique
+                .addUniqueKey("passport")                    // unique (default key)
+                .addNonUniqueKey("department");                       // non-unique
         accounts.defineStateStore(spec, (String) null);       // manual store
 
         // 2. Bind the typed facade — just name the classes; the SDK

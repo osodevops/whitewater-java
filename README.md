@@ -43,10 +43,14 @@ WhitewaterClient client = WhitewaterClient.builder()
 ```java
 var accounts = client.createDomain("accounts");
 var spec = StateStoreSpec.named("employees")
-        .addKey("passport", true).addKey("department", false);          // up to 10 named keys
+        .addUniqueKey("passport").addNonUniqueKey("department");          // up to 10 named keys
 var store = accounts.defineStateStore(spec, null);                    // durable store on the Nodes
 
-store.put("emp-1", payload, Map.of("passport", "P123", "department", "eng"));
+// named-key postings: pick whichever call-site style reads cleanest —
+store.put("emp-1", payload, Map.of("passport", "P123", "department", "eng")); // raw map
+store.put("emp-1", payload, PassportKeySet.with("P123", "eng"));              // typed key set
+store.put("emp-1", payload, PassportKeySet.of(k -> k.passport("P123").department("eng")));
+store.put("emp-1", payload, "P123");                                          // single named key
 var row = store.get("emp-1");                          // StoreRow | null + freshness
 var rows = store.getBy("passport", "P123");            // named key — a list
 store.iterate(r -> export(r));

@@ -33,7 +33,7 @@ import java.util.function.Consumer;
  *
  * <pre>{@code
  * var spec = StateStoreSpec.named("accounts.employees")
- *         .addKey("passport", true).addKey("department");
+ *         .addUniqueKey("passport").addNonUniqueKey("department");
  * client.stateStores().define(spec, null);
  *
  * StateStore<String, Employee> store =

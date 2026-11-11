@@ -225,7 +225,7 @@ class DomainSurfaceTest {
         var app = client.domain("app");
 
         app.defineStateStore(
-                StateStoreSpec.named("profiles").addKey("user_id", true),
+                StateStoreSpec.named("profiles").addUniqueKey("user_id"),
                 (String) null);
         var define = commandAt(0);
         assertEquals("define_state_store", define.get("command").asText());

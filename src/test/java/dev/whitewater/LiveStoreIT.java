@@ -47,8 +47,8 @@ class LiveStoreIT {
         client.createDomain(domain);
 
         var spec = StateStoreSpec.named(domain + ".employees")
-                .addKey("passport", true)
-                .addKey("department", false);
+                .addUniqueKey("passport")
+                .addNonUniqueKey("department");
         StateStore<String, String> store =
                 client.stateStores().define(spec, null, String.class, String.class);
         assertEquals(domain + ".employees", store.name());

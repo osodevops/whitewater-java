@@ -6,7 +6,7 @@ import dev.whitewater.internal.Transport;
 /**
  * How a feed-sourced StateStore projects one committed source record to
  * a named key's typed lookup values — declared on
- * {@code addKey(..., extractor)} and applied by server-side replay.
+ * {@code addUniqueKey/addNonUniqueKey(..., extractor)} and applied by server-side replay.
  * Build with {@link #recordKey()}, {@link #metadata(String)}, or
  * {@link #json(String)}; manual stores take values on each {@code put}
  * instead and must leave the extractor unset.

@@ -14,8 +14,8 @@ handle and every name resolves inside it:
 ```java
 var accounts = client.createDomain("accounts");
 var spec = StateStoreSpec.named("employees")
-        .addKey("passport", true)            // unique: one row per value
-        .addKey("department", false);        // non-unique: value -> many rows
+        .addUniqueKey("passport")            // unique: one row per value
+        .addNonUniqueKey("department");        // non-unique: value -> many rows
 
 accounts.defineStateStore(spec, (String) null);   // manual store: accounts.employees
 ```
@@ -27,7 +27,7 @@ or a `Feed` handle / `Scoped.absolute` across Domains:
 accounts.defineStateStore(spec, accounts.feed("events"));
 ```
 
-`addKey` records declaration intent used by `define` — named keys are
+`addUniqueKey`/`addNonUniqueKey` record declaration intent used by `define` — named keys are
 declared at creation; at most `StateStoreSpec.MAX_NAMED_KEYS` (10).
 Adding a key to an existing store has no effect server-side.
 
@@ -232,8 +232,8 @@ an `Extractor`:
 
 ```java
 var spec = StateStoreSpec.named("tagged")
-        .addKey("passport", true, Extractor.metadata("pp"))
-        .addKey("department", false, Extractor.json("dept"));
+        .addUniqueKey("passport", Extractor.metadata("pp"))
+        .addNonUniqueKey("department", Extractor.json("dept"));
 accounts.defineStateStore(spec, accounts.feed("events"));
 ```
 
@@ -278,7 +278,7 @@ client.commands(Commands.of().defineStateStore(
 
 | Where | Type | Meaning / remedy |
 |---|---|---|
-| `addKey` #11 / duplicate / blank | `IllegalStateException` / `IllegalArgumentException` | Declaration contract (10-key bound, distinct names). |
+| `addUniqueKey`/`addNonUniqueKey`/`addKey` #11 / duplicate / blank | `IllegalStateException` / `IllegalArgumentException` | Declaration contract (10-key bound, distinct names). |
 | `define` spec + `source` + bare named keys | `IllegalArgumentException` | Feed-sourced keys need an `Extractor` — checked before the call. |
 | `define` manual spec + `Extractor` | `IllegalArgumentException` | Extractors apply to feed-sourced stores only. |
 | Codec decode of a foreign payload | `IllegalArgumentException` | The stored bytes aren't your type — bind the matching `Codec` or `bytes()`. |

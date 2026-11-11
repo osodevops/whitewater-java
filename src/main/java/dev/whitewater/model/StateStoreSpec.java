@@ -9,8 +9,8 @@ import java.util.List;
  *
  * <pre>{@code
  * var spec = StateStoreSpec.named("accounts.employees")
- *         .addKey("passport", true)                    // unique
- *         .addKey("department");                       // non-unique
+ *         .addUniqueKey("passport")                    // unique
+ *         .addNonUniqueKey("department");              // non-unique
  * client.stateStores().define(spec, null);              // manual store
  * }</pre>
  *
@@ -68,6 +68,33 @@ public final class StateStoreSpec {
 
     public StateStoreSpec addKey(String namedKey) {
         return addKey(namedKey, false);
+    }
+
+    /**
+     * Declare a <b>unique</b> named key — one value resolves to at most
+     * one primary row ({@code addKey(namedKey, true, extractor)}).
+     * {@code extractor} declares how replay projects each source-Feed
+     * record to this key's values — required on feed-sourced stores,
+     * refused on manual ones.
+     */
+    public StateStoreSpec addUniqueKey(String namedKey, Extractor extractor) {
+        return addKey(namedKey, true, extractor);
+    }
+
+    public StateStoreSpec addUniqueKey(String namedKey) {
+        return addUniqueKey(namedKey, null);
+    }
+
+    /**
+     * Declare a <b>non-unique</b> named key — one value lists every
+     * matching primary row ({@code addKey(namedKey, false, extractor)}).
+     */
+    public StateStoreSpec addNonUniqueKey(String namedKey, Extractor extractor) {
+        return addKey(namedKey, false, extractor);
+    }
+
+    public StateStoreSpec addNonUniqueKey(String namedKey) {
+        return addNonUniqueKey(namedKey, null);
     }
 
     public List<NamedKey> namedKeys() {

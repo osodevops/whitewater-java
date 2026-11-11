@@ -79,8 +79,8 @@ public class WindowPipes {
         // enumerable without knowing composite row keys.
         accounts.defineStateStore(
                 StateStoreSpec.named("panes")
-                        .addKey("key")
-                        .addKey("pane"),
+                        .addNonUniqueKey("key")
+                        .addNonUniqueKey("pane"),
                 (String) null);
 
         // WCL equivalent:

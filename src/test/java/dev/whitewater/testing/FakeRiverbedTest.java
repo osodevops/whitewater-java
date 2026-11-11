@@ -195,7 +195,7 @@ class FakeRiverbedTest {
     void storeRoundTripsRowsAndDedupesMutations() {
         var accounts = client.domain("accounts");
         accounts.defineStateStore(StateStoreSpec.named("employees")
-                .addKey("department"), (dev.whitewater.ScopedRef) null);
+                .addNonUniqueKey("department"), (dev.whitewater.ScopedRef) null);
         var store = accounts.stateStore("employees", String.class);
 
         UUID mutationId = UUID.randomUUID();

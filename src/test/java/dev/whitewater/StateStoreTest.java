@@ -118,8 +118,8 @@ class StateStoreTest {
     @Test
     void defineSendsTheTypedCommandWithDeclaredNamedKeys() throws Exception {
         var spec = StateStoreSpec.named("accounts.employees")
-                .addKey("passport", true)
-                .addKey("department", false);
+                .addUniqueKey("passport")
+                .addNonUniqueKey("department");
         var store = client.stateStores().define(spec, null);
 
         assertEquals("accounts.employees", store.name());
@@ -136,24 +136,24 @@ class StateStoreTest {
     void boundsNamedKeysAndRejectsDuplicates() {
         var spec = StateStoreSpec.named("accounts.ten");
         for (int i = 0; i < 10; i++) {
-            spec.addKey("k" + i);
+            spec.addNonUniqueKey("k" + i);
         }
-        assertThrows(IllegalStateException.class, () -> spec.addKey("k10"));
+        assertThrows(IllegalStateException.class, () -> spec.addNonUniqueKey("k10"));
         assertThrows(IllegalArgumentException.class,
-                () -> StateStoreSpec.named("accounts.d").addKey("a").addKey("a"));
-        assertThrows(IllegalArgumentException.class, () -> StateStoreSpec.named("accounts.b").addKey(" "));
+                () -> StateStoreSpec.named("accounts.d").addNonUniqueKey("a").addNonUniqueKey("a"));
+        assertThrows(IllegalArgumentException.class, () -> StateStoreSpec.named("accounts.b").addNonUniqueKey(" "));
     }
 
     @Test
     void defineFeedSourcedNamedKeysNeedExtractors() {
         // A feed-sourced named key without a projection is a declaration bug.
-        var bare = StateStoreSpec.named("accounts.src").addKey("k");
+        var bare = StateStoreSpec.named("accounts.src").addNonUniqueKey("k");
         var refused = assertThrows(IllegalArgumentException.class,
                 () -> client.stateStores().define(bare, "accounts.events"));
         assertTrue(refused.getMessage().contains("require an extractor"));
 
         // An extractor on a manual store is refused — puts carry the values.
-        var manual = StateStoreSpec.named("accounts.m").addKey("k", false, Extractor.metadata("pp"));
+        var manual = StateStoreSpec.named("accounts.m").addNonUniqueKey("k", Extractor.metadata("pp"));
         var refusedManual = assertThrows(IllegalArgumentException.class,
                 () -> client.stateStores().define(manual, null));
         assertTrue(refusedManual.getMessage().contains("manual stores"));
@@ -162,8 +162,8 @@ class StateStoreTest {
     @Test
     void defineFeedSourcedEmitsExtractors() throws Exception {
         var spec = StateStoreSpec.named("accounts.tagged")
-                .addKey("passport", true, Extractor.metadata("pp"))
-                .addKey("department", false, Extractor.json("dept"));
+                .addUniqueKey("passport", Extractor.metadata("pp"))
+                .addNonUniqueKey("department", Extractor.json("dept"));
         client.stateStores().define(spec, "accounts.events");
 
         JsonNode sent = lastBody("/v1/admin/commands").get("commands").get(0);
@@ -184,8 +184,25 @@ class StateStoreTest {
         // StateStoreSpec carries name + named keys — data operations
         // live on the bound StateStore facade, so an unbound spec has
         // nothing to call (compile-time enforced, no runtime check needed).
-        var spec = StateStoreSpec.named("accounts.unbound").addKey("k");
+        var spec = StateStoreSpec.named("accounts.unbound").addNonUniqueKey("k");
         assertEquals(1, spec.namedKeys().size());
+    }
+
+    @Test
+    void explicitUniqueAndNonUniqueHelpersSetTheFlag() {
+        var spec = StateStoreSpec.named("accounts.flags")
+                .addUniqueKey("passport")
+                .addNonUniqueKey("department");
+        assertTrue(spec.namedKeys().get(0).unique());
+        assertFalse(spec.namedKeys().get(1).unique());
+        // extractor overloads delegate the same way
+        var feedSourced = StateStoreSpec.named("accounts.fs")
+                .addUniqueKey("pp", Extractor.metadata("pp"))
+                .addNonUniqueKey("dept", Extractor.json("dept"));
+        assertEquals("pp", feedSourced.namedKeys().get(0).name());
+        assertTrue(feedSourced.namedKeys().get(0).unique());
+        assertNotNull(feedSourced.namedKeys().get(0).extractor());
+        assertFalse(feedSourced.namedKeys().get(1).unique());
     }
 
     @Test
@@ -376,8 +393,8 @@ class StateStoreTest {
     @Test
     void storeKeySetSupportsAllInlineStylesAndSingleStringFallback() throws Exception {
         var spec = StateStoreSpec.named("accounts.employees")
-                .addKey("passport", true)
-                .addKey("department");
+                .addUniqueKey("passport")
+                .addNonUniqueKey("department");
         var store = client.stateStores().define(spec, null);
 
         // 1A: Static factory PassportKeySet.with("P123", "eng")

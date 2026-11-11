@@ -81,8 +81,8 @@ import dev.whitewater.model.Extractor;
 import dev.whitewater.model.StateStoreSpec;
 
 var spec = StateStoreSpec.named("customers")
-        .addKey("email", true, Extractor.json("$.email"))
-        .addKey("tier", false, Extractor.json("$.tier"));
+        .addUniqueKey("email", Extractor.json("$.email"))
+        .addNonUniqueKey("tier", Extractor.json("$.tier"));
 ops.defineStateStore(spec, ops.feed("customer.changes")); // feed-sourced
 ```
 
@@ -165,8 +165,8 @@ import dev.whitewater.model.NamedKey;
 ops.defineStateStore(
         // Pane view: 'key' and 'pane' are required, non-unique.
         StateStoreSpec.named("order.counts")
-                .addKey("key", false)
-                .addKey("pane", false),
+                .addNonUniqueKey("key")
+                .addNonUniqueKey("pane"),
         (String) null);
 ops.defineWindowPipe(
         "orders.hourly",                  // the pipe — ops.orders.hourly
