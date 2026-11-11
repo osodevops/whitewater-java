@@ -38,6 +38,14 @@ class ConformanceRunnerIT {
     /** Transport errors and 5xx ride this separate budget, never a poll attempt. */
     private static final int TRANSIENT_ATTEMPTS = 120;
     private static final long TRANSIENT_INTERVAL_MS = 500;
+    /** Wall-clock bound on the transient budget: 120 attempts was meant as a
+     * ~one-minute window for quorum/election turbulence, but an unavailable
+     * endpoint can burn a whole 60s transport timeout per attempt — cap the
+     * elapsed window so a dead Riverbed fails instead of grinding for hours. */
+    private static final long TRANSIENT_BUDGET_MS = 120_000;
+    /** The chaos driver's own internal waits are bounded to a few minutes;
+     * give it headroom but never let a wedged hook stall the gate. */
+    private static final long CHAOS_TIMEOUT_MINUTES = 7;
 
 
     private static WhitewaterClient client;
@@ -162,11 +170,13 @@ class ConformanceRunnerIT {
      * dedup makes the retry safe.
      */
     private JsonNode executeTransient(String op, JsonNode args) throws Exception {
+        long deadline = System.nanoTime() + TRANSIENT_BUDGET_MS * 1_000_000L;
         for (int transientAttempts = 0;; transientAttempts++) {
             try {
                 return execute(op, args);
             } catch (WhitewaterException.Unavailable | WhitewaterException.AmbiguousResult e) {
-                if (transientAttempts >= TRANSIENT_ATTEMPTS) {
+                if (transientAttempts >= TRANSIENT_ATTEMPTS
+                        || System.nanoTime() >= deadline) {
                     throw e;
                 }
                 try {
@@ -545,8 +555,12 @@ class ConformanceRunnerIT {
         command.add(op);
         args.fieldNames().forEachRemaining(name -> command.add(args.get(name).asText()));
         var process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        if (!process.waitFor(CHAOS_TIMEOUT_MINUTES, java.util.concurrent.TimeUnit.MINUTES)) {
+            process.destroyForcibly();
+            fail("chaos hook " + op + " timed out after " + CHAOS_TIMEOUT_MINUTES + "m");
+        }
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        int code = process.waitFor();
+        int code = process.exitValue();
         if (code != 0) {
             fail("chaos hook " + op + " exited " + code + ": " + output);
         }
