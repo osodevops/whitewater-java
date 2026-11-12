@@ -1,10 +1,8 @@
-package dev.whitewater.conformance;
+package dev.whitewater;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import dev.whitewater.WhitewaterClient;
-import dev.whitewater.WhitewaterException;
 import dev.whitewater.internal.Transport;
 import dev.whitewater.internal.Wire;
 import org.junit.jupiter.api.BeforeAll;
@@ -45,7 +43,7 @@ class ConformanceRunnerIT {
     private static final long TRANSIENT_BUDGET_MS = 120_000;
     /** The chaos driver's own internal waits are bounded to a few minutes;
      * give it headroom but never let a wedged hook stall the gate. */
-    private static final long CHAOS_TIMEOUT_MINUTES = 7;
+    private static final long CHAOS_TIMEOUT_MINUTES = 12;
 
 
     private static WhitewaterClient client;
@@ -55,6 +53,16 @@ class ConformanceRunnerIT {
     private static String chaosCommand;
     private WhitewaterClient activeClient;
     private Transport activeTransport;
+    private String activeKey;
+    /** Suite-wide "last moment any transport call reached the Riverbed".
+     * Chaos fixtures take Nodes down legitimately, so a brief outage must
+     * still retry — but once every endpoint has been unreachable for a
+     * whole transient budget the Riverbed is dead, and every later op
+     * should fail fast instead of each poll attempt burning a fresh
+     * 120-second window (~30× that per step) until the outer gate kills
+     * the run with no diagnosis. */
+    private long lastContactNs = System.nanoTime();
+    private WhitewaterException lastTransient;
 
     @BeforeAll
     static void setUp() {
@@ -109,8 +117,11 @@ class ConformanceRunnerIT {
         JsonNode scenario = Transport.json().readTree(Files.readAllBytes(fixture));
         String scenarioKey = scenario.hasNonNull("api_key")
                 ? scenario.get("api_key").asText() : defaultApiKey;
-        activeClient = buildClient(scenarioKey);
-        activeTransport = new Transport(endpointUris(), scenarioKey, Duration.ofSeconds(30));
+        if (activeClient == null || !scenarioKey.equals(activeKey)) {
+            activeKey = scenarioKey;
+            activeClient = buildClient(scenarioKey);
+            activeTransport = new Transport(endpointUris(), scenarioKey, Duration.ofSeconds(30));
+        }
         JsonNode steps = scenario.path("steps");
         for (JsonNode step : steps) {
             String op = step.path("op").asText();
@@ -141,7 +152,7 @@ class ConformanceRunnerIT {
                         evaluateExpectations(expect, lastResult);
                         break;  // satisfied — stop polling
                     } catch (AssertionError pending) {
-                        if (attempt + 1 >= times) {
+                        if (attempt + 1 >= times || transientBudgetExhausted()) {
                             throw pending;
                         }
                     }
@@ -168,15 +179,36 @@ class ConformanceRunnerIT {
      * refused commit's "retry with the same append identity" rides out
      * without spending a poll attempt. Identical args mean the server's
      * dedup makes the retry safe.
+     *
+     * <p>The budget is shared across the whole run: it measures time since
+     * the last successful transport contact, not per-call wall clock. A
+     * step whose polls keep reaching the server keeps its full poll
+     * window; a dead Riverbed fails the step after one budget's worth of
+     * retries and every subsequent op returns the stored transient error
+     * immediately — the suite reports named-step failures in ~2 minutes
+     * rather than timing out opaque.
      */
     private JsonNode executeTransient(String op, JsonNode args) throws Exception {
-        long deadline = System.nanoTime() + TRANSIENT_BUDGET_MS * 1_000_000L;
         for (int transientAttempts = 0;; transientAttempts++) {
+            if (transientBudgetExhausted()) {
+                throw lastTransient != null ? lastTransient
+                        : new WhitewaterException.Unavailable(503, "unavailable",
+                                "Riverbed unreachable for the full transient budget");
+            }
             try {
-                return execute(op, args);
+                JsonNode result = execute(op, args);
+                lastContactNs = System.nanoTime();
+                lastTransient = null;
+                return result;
             } catch (WhitewaterException.Unavailable | WhitewaterException.AmbiguousResult e) {
-                if (transientAttempts >= TRANSIENT_ATTEMPTS
-                        || System.nanoTime() >= deadline) {
+                lastTransient = e;
+                if (e.status() != 0) {
+                    // An HTTP answer — even a retryable 503 during chaos
+                    // recovery — proves contact; only a refused/timed-out
+                    // socket (status 0) counts against the reach budget.
+                    lastContactNs = System.nanoTime();
+                }
+                if (transientAttempts >= TRANSIENT_ATTEMPTS) {
                     throw e;
                 }
                 try {
@@ -185,8 +217,21 @@ class ConformanceRunnerIT {
                     Thread.currentThread().interrupt();
                     throw e;
                 }
+            } catch (WhitewaterException e) {
+                lastContactNs = System.nanoTime();
+                lastTransient = null;
+                throw e;
             }
         }
+    }
+
+    /** True once no transport call has reached a Node for a full
+     * transient budget — answered responses (even 503s) reset the clock,
+     * so polls cannot observe new state only when sockets themselves
+     * fail. A step should fail now instead of sleeping through the rest
+     * of its poll window. */
+    private boolean transientBudgetExhausted() {
+        return System.nanoTime() - lastContactNs >= TRANSIENT_BUDGET_MS * 1_000_000L;
     }
 
     private JsonNode execute(String op, JsonNode args) throws Exception {
@@ -241,10 +286,6 @@ class ConformanceRunnerIT {
     }
 
 
-    private static dev.whitewater.Domain domainOf(WhitewaterClient c, String name) {
-        var domain = name.contains(".") ? name.substring(0, name.indexOf('.')) : name;
-        return c.domain(domain);
-    }
 
     private JsonNode executeCommands(JsonNode args) {
         var commands = new ArrayList<Map<String, Object>>();
@@ -255,7 +296,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeWriterAppend(JsonNode args) {
-        var writer = domainOf(activeClient, args.get("writer").asText()).writerSession(
+        var writer = activeClient.writerSession(
                 args.get("writer").asText(), args.path("session_epoch").asLong())
                 .useCompression(args.path("use_compression").asBoolean());
         var result = writer.append(new dev.whitewater.WriterSessionClient.Append(
@@ -280,7 +321,7 @@ class ConformanceRunnerIT {
                     record.hasNonNull("event_time_ns") ? record.get("event_time_ns").asLong() : null,
                     decodeMetadata(record.path("metadata"))));
         }
-        var writer = domainOf(activeClient, records.get(0).get("writer").asText()).writerSession(
+        var writer = activeClient.writerSession(
                 records.get(0).get("writer").asText(),
                 records.get(0).path("session_epoch").asLong())
                 .useCompression(args.path("use_compression").asBoolean());
@@ -292,7 +333,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeReaderOpen(JsonNode args) {
-        return toJson(domainOf(activeClient, args.get("reader").asText()).readerSession(args.get("reader").asText())
+        return toJson(activeClient.readerSession(args.get("reader").asText())
                 .open(args.path("capacity").asInt(64),
                         UUID.fromString(args.get("request_id").asText())));
     }
@@ -300,7 +341,7 @@ class ConformanceRunnerIT {
     private JsonNode executeReaderFetch(JsonNode args) {
         var session = new dev.whitewater.model.ReaderSession(
                 null, null, args.path("session_epoch").asLong(), 0, null, null);
-        return toJson(domainOf(activeClient, args.get("reader").asText()).readerSession(args.get("reader").asText())
+        return toJson(activeClient.readerSession(args.get("reader").asText())
                 .fetch(session, args.hasNonNull("limit") ? args.get("limit").asInt() : null,
                         UUID.fromString(args.get("request_id").asText())));
     }
@@ -308,7 +349,7 @@ class ConformanceRunnerIT {
     private JsonNode executeReaderAck(JsonNode args) {
         var session = new dev.whitewater.model.ReaderSession(
                 null, null, args.path("session_epoch").asLong(), 0, null, null);
-        return toJson(domainOf(activeClient, args.get("reader").asText()).readerSession(args.get("reader").asText())
+        return toJson(activeClient.readerSession(args.get("reader").asText())
                 .ack(session, new dev.whitewater.model.Cursor(args.get("cursor").asText()),
                         UUID.fromString(args.get("request_id").asText())));
     }
@@ -316,11 +357,11 @@ class ConformanceRunnerIT {
     private JsonNode executeReaderClose(JsonNode args) {
         var session = new dev.whitewater.model.ReaderSession(
                 null, null, args.path("session_epoch").asLong(), 0, null, null);
-        return toJson(domainOf(activeClient, args.get("reader").asText()).readerSession(args.get("reader").asText()).close(session));
+        return toJson(activeClient.readerSession(args.get("reader").asText()).close(session));
     }
 
     private JsonNode executeMemberJoin(JsonNode args) {
-        return toJson(domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText())
+        return toJson(activeClient.subscriptionMember(args.get("subscription").asText())
                 .join(UUID.fromString(args.get("member_id").asText())));
     }
 
@@ -342,7 +383,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeMemberLease(String path, JsonNode args, boolean needsLeaseEpoch) {
-        var member = domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText());
+        var member = activeClient.subscriptionMember(args.get("subscription").asText());
         if ("release".equals(path.substring(path.lastIndexOf('/') + 1))) {
             member.release(joinedFrom(args), leaseFrom(args));
             return Transport.json().createObjectNode();
@@ -358,7 +399,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeMemberTransfer(JsonNode args) {
-        var member = domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText());
+        var member = activeClient.subscriptionMember(args.get("subscription").asText());
         var lease = member.transfer(joinedFrom(args), leaseFrom(args),
                 UUID.fromString(args.get("to_member_id").asText()),
                 args.get("to_member_epoch").asLong(),
@@ -369,7 +410,7 @@ class ConformanceRunnerIT {
     }
 
     private JsonNode executeMemberFetch(JsonNode args) {
-        var page = domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText())
+        var page = activeClient.subscriptionMember(args.get("subscription").asText())
                 .fetch(joinedFrom(args), leaseFrom(args),
                         args.hasNonNull("limit") ? args.get("limit").asInt() : null);
         return toJson(page);
@@ -381,19 +422,19 @@ class ConformanceRunnerIT {
                 args.hasNonNull("cursor")
                         ? new dev.whitewater.model.Cursor(args.get("cursor").asText()) : null,
                 readPositions(args.path("positions")), 0, 0, null, null);
-        domainOf(activeClient, args.get("subscription").asText()).memberClient(args.get("subscription").asText())
+        activeClient.subscriptionMember(args.get("subscription").asText())
                 .ack(joinedFrom(args), leaseFrom(args), page);
         return Transport.json().createObjectNode();
     }
 
     private JsonNode executeMemberState(JsonNode args) {
-        return toJson(domainOf(activeClient, args.get("subscription").asText())
-                .subscription(args.get("subscription").asText()).memberState());
+        return toJson(activeClient.subscriptionMemberState(
+                args.get("subscription").asText()));
     }
 
     private JsonNode executeSubscriptionSeek(JsonNode args) {
-        return toJson(domainOf(activeClient, args.get("subscription").asText())
-                .subscription(args.get("subscription").asText()).seek(
+        return toJson(activeClient.seekSubscription(
+                args.get("subscription").asText(),
                 args.get("position").asText(),
                 args.hasNonNull("timestamp_ns") ? args.get("timestamp_ns").asLong() : null,
                 args.hasNonNull("cursor")
@@ -411,7 +452,7 @@ class ConformanceRunnerIT {
                 decodeBytes(args.get("payload")),
                 args.hasNonNull("event_time_ns") ? args.get("event_time_ns").asLong() : null,
                 decodeMetadata(args.path("metadata")));
-        return toJson(domainOf(activeClient, args.get("feed").asText()).feedOps()
+        return toJson(activeClient.feeds()
                 .useCompression(args.path("use_compression").asBoolean())
                 .append(args.get("feed").asText(), record));
     }
@@ -441,7 +482,7 @@ class ConformanceRunnerIT {
                 args.hasNonNull("wait_ms") ? args.get("wait_ms").asLong() : null,
                 args.hasNonNull("after_event_time_ns")
                         ? args.get("after_event_time_ns").asLong() : null);
-        return toJson(domainOf(activeClient, args.get("feed").asText()).feedOps()
+        return toJson(activeClient.feeds()
                 .temporaryFetch(args.get("feed").asText(), options));
     }
 
@@ -555,16 +596,26 @@ class ConformanceRunnerIT {
         command.add(op);
         args.fieldNames().forEachRemaining(name -> command.add(args.get(name).asText()));
         var process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        if (!process.waitFor(CHAOS_TIMEOUT_MINUTES, java.util.concurrent.TimeUnit.MINUTES)) {
-            process.destroyForcibly();
-            fail("chaos hook " + op + " timed out after " + CHAOS_TIMEOUT_MINUTES + "m");
+        try {
+            if (!process.waitFor(CHAOS_TIMEOUT_MINUTES, java.util.concurrent.TimeUnit.MINUTES)) {
+                process.destroyForcibly();
+                fail("chaos hook " + op + " timed out after " + CHAOS_TIMEOUT_MINUTES + "m");
+            }
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            int code = process.exitValue();
+            if (code != 0) {
+                fail("chaos hook " + op + " exited " + code + ": " + output);
+            }
+            return Transport.json().createObjectNode();
+        } finally {
+            // The hook runs docker control and its own health probes, none
+            // of which touch the shared transport — but it legitimately
+            // takes minutes, longer than the transient budget. Whether it
+            // passes or fails, the next op deserves a fresh contact window
+            // instead of inheriting a clock that expired mid-action.
+            lastContactNs = System.nanoTime();
+            lastTransient = null;
         }
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        int code = process.exitValue();
-        if (code != 0) {
-            fail("chaos hook " + op + " exited " + code + ": " + output);
-        }
-        return Transport.json().createObjectNode();
     }
 
     // ---- helpers -------------------------------------------------------------

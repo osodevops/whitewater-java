@@ -191,8 +191,12 @@ class FeedConsumerTest {
         var consumer = feed().consumer("enricher")
                 .onRecord(delivered::add);
         Thread thread = consumer.runAsync();
-        awaitCount(fetchCalls, 2);          // first page + one empty poll
-        consumer.close();
+        try {
+            awaitCount(fetchCalls, 2);      // first page + one empty poll
+            consumer.close();
+        } finally {
+            consumer.close();
+        }
         thread.join(5_000);
 
         assertEquals(2, delivered.size());
@@ -218,8 +222,11 @@ class FeedConsumerTest {
                 .onRecord(delivered::add)
                 .onError(errors::add);
         consumer.runAsync();
-        awaitCount(openCalls, 2);           // died once, re-opened
-        consumer.close();
+        try {
+            awaitCount(openCalls, 2);       // died once, re-opened
+        } finally {
+            consumer.close();
+        }
 
         assertTrue(openCalls.get() >= 2, "session must re-open after death");
         assertFalse(errors.isEmpty(), "supervised failures reach onError");
@@ -249,11 +256,13 @@ class FeedConsumerTest {
                     latch.countDown();
                 });
         consumer.runAsync();
-        assertTrue(latch.await(10, TimeUnit.SECONDS));
-        consumer.close();
-
-        assertTrue(attempts.get() > 2, "the failed page must redeliver");
-        assertTrue(delivered.contains("user-1"));
+        try {
+            assertTrue(latch.await(10, TimeUnit.SECONDS));
+            assertTrue(attempts.get() > 2, "the failed page must redeliver");
+            assertTrue(delivered.contains("user-1"));
+        } finally {
+            consumer.close();
+        }
     }
 
     @Test
@@ -265,10 +274,14 @@ class FeedConsumerTest {
             done.countDown();
         });
         runner.start();
-        awaitCount(openCalls, 1);
-        consumer.close();
-        assertTrue(done.await(5, TimeUnit.SECONDS), "run() must return after close");
-        assertFalse(consumer.isRunning());
+        try {
+            awaitCount(openCalls, 1);
+            consumer.close();
+            assertTrue(done.await(5, TimeUnit.SECONDS), "run() must return after close");
+            assertFalse(consumer.isRunning());
+        } finally {
+            consumer.close();
+        }
     }
 
     // ---- store lookup ergonomics ------------------------------------------------

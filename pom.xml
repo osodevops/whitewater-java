@@ -67,6 +67,9 @@
           <excludes>
             <exclude>**/ConformanceRunnerIT.java</exclude>
           </excludes>
+          <!-- A leaked non-daemon test thread must surface as a failure,
+               not leave the fork alive until the outer gate kills it. -->
+          <forkedProcessExitTimeoutInSeconds>60</forkedProcessExitTimeoutInSeconds>
         </configuration>
       </plugin>
       <plugin>
@@ -77,6 +80,7 @@
           <includes>
             <include>**/ConformanceRunnerIT.java</include>
           </includes>
+          <forkedProcessExitTimeoutInSeconds>60</forkedProcessExitTimeoutInSeconds>
         </configuration>
         <executions>
           <execution>
