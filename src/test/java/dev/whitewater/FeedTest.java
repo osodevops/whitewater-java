@@ -287,9 +287,12 @@ class FeedTest {
                 client.feed("orders.events", Order.class).writer("orders.ingest");
 
         assertTrue(bodies.stream().anyMatch(b -> b.contains("CREATE WRITER")), "writer was declared");
-        assertTrue(bodies.stream().anyMatch(b -> b.contains("open_writer_session")), "session opened");
+        assertEquals(0, writer.sessionEpoch(), "an idle handle holds no epoch");
 
         writer.append("order-1", new Order("order-1", 99));
+
+        assertTrue(bodies.stream().anyMatch(b -> b.contains("open_writer_session")),
+                "session bound lazily on first append");
 
         JsonNode sent = lastBody("/v1/writers/append");
         assertEquals("orders.ingest", sent.get("writer").asText());
@@ -307,7 +310,9 @@ class FeedTest {
         refuseCreates = true;
         FeedWriter<String, Order> writer =
                 client.feed("orders.events", Order.class).writer("orders.ingest");
-        assertEquals(42, writer.sessionEpoch(), "session opened despite exists refusal");
+        assertEquals(0, writer.sessionEpoch(), "epoch binds lazily — nothing written yet");
+        writer.append("order-1", new Order("order-1", 1));
+        assertEquals(42, writer.sessionEpoch(), "session bound on first append despite exists refusal");
     }
 
     @Test

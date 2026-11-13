@@ -20,7 +20,7 @@ import java.util.concurrent.Executor;
  * bookkeeping.
  *
  * <pre>{@code
- * var writer = client.writer("orders.ingest");            // opens a session
+ * var writer = client.writer("orders.ingest");            // session binds on first append
  * writer.append("order-1", "{\"total\":42}");              // UTF-8 convenience
  * writer.append("order-2".getBytes(), binaryPayload);      // raw bytes when you have them
  * writer.append(new Writer.Record(requestId, "order-3", json)); // pinned request_id
@@ -73,6 +73,7 @@ public final class Writer {
     private final Executor executor;
     private final String writer;
     private volatile long sessionEpoch;
+    private volatile boolean sessionOpen;
     private boolean compression;
 
     Writer(Transport transport, Executor executor, String writer) {
@@ -81,10 +82,15 @@ public final class Writer {
         this.writer = Objects.requireNonNull(writer);
     }
 
-    /** Open the session and bind this Writer to the issued epoch. */
-    Writer open() {
-        reopen();
-        return this;
+    /**
+     * Bind the session now — the eager fail-fast path behind
+     * {@code WriterBuilder.open()}. Unforced, the session binds lazily on
+     * the first append, so an idle handle holds no fencing epoch.
+     */
+    synchronized void ensureOpen() {
+        if (!sessionOpen) {
+            reopen();
+        }
     }
 
     /**
@@ -105,6 +111,7 @@ public final class Writer {
                     "open_writer_session returned no session_epoch for " + writer);
         }
         this.sessionEpoch = epoch.asLong();
+        this.sessionOpen = true;
     }
 
     public String writer() {
@@ -138,6 +145,7 @@ public final class Writer {
 
     /** Append one record with explicit request identity (retry-safe). */
     public AppendResult append(Record record) {
+        ensureOpen();
         UUID requestId = record.requestId() == null ? UUID.randomUUID() : record.requestId();
         var body = Wire.appendRequest(requestId, writer, sessionEpoch,
                 record.key(), record.payload(), record.eventTimeNs(), record.metadata());
@@ -149,6 +157,7 @@ public final class Writer {
 
     /** Append a batch under one request; per-record results + batching guidance. */
     public BatchResult appendBatch(List<Record> records) {
+        ensureOpen();
         var array = Transport.json().createArrayNode();
         for (Record record : records) {
             UUID requestId = record.requestId() == null ? UUID.randomUUID() : record.requestId();

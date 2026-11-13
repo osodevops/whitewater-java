@@ -114,18 +114,21 @@ class FakeRiverbedTest {
 
     @Test
     void staleWriterEpochIsRefusedAndReopenHeals() {
+        // Sessions bind lazily on first append, so the last handle to
+        // *bind* holds the epoch — construction order fences nothing.
         Writer first = orders().writer("ingest");
-        Writer second = orders().writer("ingest");        // fences the first session
+        first.append("order-1", "payload-1");              // binds the epoch
+        Writer second = orders().writer("ingest");
+        second.append("order-2", "payload-2");             // binds over it — fences first
 
         assertThrows(WhitewaterException.StaleSession.class,
-                () -> first.append("order-1", "payload-1"));
-        second.append("order-1", "payload-1");
+                () -> first.append("order-3", "payload-3"));
 
         first.reopen();                                    // binds a fresh epoch
-        first.append("order-2", "payload-2");
+        first.append("order-4", "payload-4");
         assertThrows(WhitewaterException.StaleSession.class,
-                () -> second.append("order-3", "payload-3"));
-        assertEquals(2, riverbed.feedSize("orders.ingest"));
+                () -> second.append("order-5", "payload-5"));
+        assertEquals(3, riverbed.feedSize("orders.ingest"));
     }
 
     @Test

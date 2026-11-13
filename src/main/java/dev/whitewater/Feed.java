@@ -149,9 +149,10 @@ public final class Feed<K, V> implements ScopedRef {
     // ---- writing ---------------------------------------------------------
 
     /**
-     * A session-bound Writer on this Feed: declares the Writer when
-     * missing (reusing an existing one), opens a session, and binds the
-     * feed's Codecs so {@code writer.append(key, value)} just works.
+     * A session-bound Writer on this Feed — declares the Writer when
+     * missing (reusing an existing one) and binds the feed's Codecs so
+     * {@code writer.write(key, value)} just works; the fencing epoch
+     * binds lazily on the first write.
      */
     public FeedWriter<K, V> writer(String writerName) {
         writerName = scope(writerName);

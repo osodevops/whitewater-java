@@ -519,13 +519,14 @@ public final class WhitewaterClient implements AutoCloseable {
     }
 
     /**
-     * A session-bound Writer: opens {@code OPEN WRITER SESSION <name>}
-     * internally and returns a handle owning the fencing epoch and
-     * request identities — {@code writer.append(key, payload)} needs no
-     * plumbing. This is the surface applications should use.
+     * A session-bound Writer: returns a handle owning the fencing epoch
+     * and request identities — the epoch binds lazily on the first
+     * append, so an idle handle holds no epoch.
+     * {@code writer.append(key, payload)} needs no plumbing. This is the
+     * surface applications should use.
      */
     Writer writer(String name) {
-        return new Writer(transport, executor, name).open();
+        return new Writer(transport, executor, name);
     }
 
     /**

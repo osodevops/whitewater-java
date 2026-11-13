@@ -308,8 +308,8 @@ public final class Domain {
     }
 
     /**
-     * A session-bound Writer inside this Domain — opens
-     * {@code OPEN WRITER SESSION} internally and owns the fencing
+     * A session-bound Writer inside this Domain — the fencing epoch
+     * binds lazily on the first append, so an idle handle holds no
      * epoch. The surface applications should use.
      */
     public Writer writer(String name) {
