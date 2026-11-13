@@ -1,6 +1,6 @@
 # whitewater-java
 
-Java SDK for Whitewater Riverbeds. Implements the versioned
+Java SDK for Whitewater. Implements the versioned
 `whitewater-protocol` wire contract defined in the main repository under
 `sdk/spec/` (`PROTOCOL.md`, `endpoints.json`, `conformance/`).
 
@@ -9,7 +9,7 @@ uses `java.net.http` — no framework required.
 
 A complete microservice walkthrough — provision, produce, pump-process, dead-letter, shutdown — lives in [`docs/demo-service.md`](docs/demo-service.md).
 
-## Clients
+## Creating a client
 
 ```java
 WhitewaterClient client = WhitewaterClient.builder()
@@ -21,66 +21,31 @@ WhitewaterClient client = WhitewaterClient.builder()
         .build();
 ```
 
-| Client | Covers |
-|---|---|
-| `client` (direct) | WCL (`POST /v1/admin/wcl`), typed commands (`POST /v1/admin/commands`), cluster health, demand reports — plus Domain-level administration: `createDomain`, `domain`/`getDomain`, `describeDomain`, `renameDomain`, `dropDomain`, `listDomains`, domain schema/role lifecycle. Everything else — Feeds, Writers, Readers, Subscriptions, Members, Pipes, Stores, Indexes — is reached **only** through a `Domain` handle |
-| `client.commands(Commands.of()…)` | The typed-command vocabulary as a validated fluent builder — Domains, Feeds, Writers, Readers, Subscriptions (feed or Domain source, delivery delay, retry budget), Roles, grants/revocations, API keys, Indexes (`define_index`/`rebuild`/`get_index`), StateStores, Pipes (forward/enrich/window, pause/resume), storage-Node registration/drain/retire/capacity |
-| `ReaderStart` | Reader/Subscription start positions: `Beginning`, `End`, `beginning()`, `now()`, `cursor(c)`, `timestamp(instant)`, `timestampNs(ns)` — `import static dev.whitewater.model.ReaderStart.*` makes `Beginning`/`End` bare |
-| `client.createDomain(name)` / `client.domain(name)` / `client.getDomain(name)` | **The front door.** `createDomain` declares + returns the handle; `domain` is a lazy handle; `getDomain` verifies + materializes the Domain's catalog view in one batched read — `feeds()`/`feedNames()`, `readers()`, `writers()`, `subscriptions()`, `pipes()`, `indexes()`, `stateStores()`, `describe()`, `historyPolicy()`, `refresh()`. `domain.feed("orders")` resolves `shop.orders` with zero I/O. There is no flat `client.feed(...)`/`client.writer(...)` — Feeds and producers exist only inside a Domain |
-| `domain.writer(name)` | **Session-bound Writer**: opens `OPEN WRITER SESSION` internally; `append(key, payload)` auto request IDs + epoch, `reopen()` after `StaleSession` |
-| `domain.reader(name, maxPageSize)` | **Session-bound Reader**: opens internally; `fetch(limit)` tracks the delivered Cursor so `ack()` commits the right frontier; `close()` releases the fence |
-| `domain.member(sub)` | **Session-bound member**: joins internally; `claim() → fetch → ack → release → transfer(work, peer)` with no epoch threading |
-| `domain.subscription(name)` | `SubscriptionRef`: `member()`/`memberClient()` raw member plumbing (`join`, `claim`, `renew`, `release`, `transfer`, `fetch`, `ack`, `state()`), `memberState()` authoritative member state, `seek(position, ts, cursor)` operator reposition — refused while a member work lease is active |
-| `domain.queryIndex(name, predicate)` | `exact` / `prefix` / `range` reads against an activated Index generation, with applied-vs-target freshness evidence |
-| `domain.createReader(relative)` | **Fluent durable Reader**: `.readerId("fulfillment")` (the Kafka groupId analogue, resolved inside the Domain) → `.readerStartPoint(Beginning)` → `.maxPageSize(n)` → `.open()` returning a codec-bound `FeedReader<K,V>` |
-| `domain.createWriter(relative)` | **Fluent durable Writer**: `.writerId("ingest")` → `.open()` returning a codec-bound `FeedWriter<K,V>` |
-| `domain.feed(name[, type/codec])` | **Typed feed facade**: binds `Codec`s once so keys/payloads serialize automatically in both directions — `feed.writer(name)` (declares + opens a session), `feed.reader(name, maxPageSize)` (decoded `fetch`/`ack`), `feed.fetch`/`records`/`load` (decoded ad-hoc reads), `feed.subscribe` (decoded batches). Same codec vocabulary as `stateStore`: `String`/`byte[]`/`JsonNode`/Jackson classes out of the box, protobuf/Avro/custom via `dev.whitewater.codec`/`Codecs.of` |
-| `domain.feedOps()` | Raw-byte ad-hoc Feed operations: committed record reads, anonymous temporary fetches (`tail`/`wait_ms`/`new_only`), ad-hoc appends, `load(feed, start, sink)` one-shot history reads — the escape hatch under `domain.feed(...)` |
-| `domain.subscribe(reader, feed, start, onRecords)` | Managed durable consume: provisions the Reader, runs open → fetch → deliver → ack on a background thread; `Subscription.close()` to stop |
-| `domain.stateStore(name[, type/codec])` / `domain.defineStateStore(spec, source)` | Typed server-side StateStore facade — durable RF3 rows on the Nodes, serialized by class (String/JSON) or bound `Codec`s (String keys + UTF-8 `String` payloads by default, `byte[]` via `byte[].class`/`Codecs.bytes()`): `put`/`get`/`getBy`/`iterate`/`delete`/`clear`/`drop`/`sync()`/`rebuild()`. Optional protobuf/Avro codecs in `dev.whitewater.codec` |
-| `client.health()` / `client.checkCompatible()` | Liveness plus the protocol block (`major`/`minor`) and advertised transport limits; `checkCompatible()` refuses a major-version mismatch |
-
-```java
-var accounts = client.createDomain("accounts");
-var spec = StateStoreSpec.named("employees")
-        .addUniqueKey("passport").addNonUniqueKey("department");          // up to 10 named keys
-var store = accounts.defineStateStore(spec, null);                    // durable store on the Nodes
-
-// named-key postings: pick whichever call-site style reads cleanest —
-store.put("emp-1", payload, Map.of("passport", "P123", "department", "eng")); // raw map
-store.put("emp-1", payload, PassportKeySet.with("P123", "eng"));              // typed key set
-store.put("emp-1", payload, PassportKeySet.of(k -> k.passport("P123").department("eng")));
-store.put("emp-1", payload, "P123");                                          // single named key
-var row = store.get("emp-1");                          // StoreRow | null + freshness
-var rows = store.getBy("passport", "P123");            // named key — a list
-store.iterate(r -> export(r));
-```
-
-`domain.stateStore(name)` binds String keys + `byte[]` payloads by
-default; `domain.stateStore(name, Codecs.json(Employee.class))` puts and
-reads back your own objects — no `getBytes()` in application code.
-`domain.feed(name, Employee.class)` binds Feeds the same way: writers
-serialize, readers/fetches/subscriptions deserialize, and the codec
-vocabulary (UTF-8, raw bytes, JSON classes, protobuf, Avro, custom) is
-shared across feeds and stores:
-
-```java
-var demo = client.createDomain("demo");
-Feed<String, Order> orders = demo.feed("orders", Order.class);
-orders.writer("ingest").append("order-1", new Order("order-1", 42));
-try (var reader = orders.reader("audit", 64)) {
-    Order o = reader.fetch().records().get(0).value();   // decoded
-}
-StateStore<String, Order> latest = demo.stateStore("orders_latest", Order.class);
-latest.put("order-1", order);                            // same codec seam
-```
+`healthy()`/`health()` check liveness and return the protocol block
+(`major`/`minor`) plus advertised transport limits; `checkCompatible()`
+refuses a major-version mismatch up front. The client also carries the
+flat administration surface — WCL (`wcl(script)`), typed commands
+(`client.commands(Commands.of()…)`), cluster health, demand reports,
+and Domain lifecycle (`createDomain`, `domain`/`getDomain`,
+`describeDomain`, `renameDomain`, `dropDomain`, `listDomains`, domain
+schema and role management). Everything else — Feeds, Writers, Readers,
+Subscriptions, Members, Pipes, StateStores, Indexes — is reached
+**only** through a `Domain` handle.
 
 ## Domains — the strongly-typed front door
 
-A Domain owns every Feed it prefixes (`shop` owns `shop.orders`), so the
-friendliest surface starts at the Domain and navigates down — the Kafka
-`groupId` + `auto.offset.reset` pairing maps to `readerId` +
-`readerStartPoint`:
+A Domain is the administrative namespace every business resource lives
+inside: a Feed named `shop.orders` belongs to the Domain `shop`, and
+nothing outside a Domain can reach it. Whitewater uses Domains instead
+of flat topic naming because the namespace is *structural*, not a
+convention — Writers, Readers, Subscriptions, StateStores, Indexes, and
+Pipes resolve their relative names inside the owning Domain, so a
+`"fulfillment"` Reader declared on `shop` is `shop.fulfillment`
+everywhere it matters: progress, leases, WCL, demand reports, and
+access control all scope to it. Cross-Domain references are possible
+but always explicit (`ScopedRef` handles), which makes accidental
+cross-wiring of two tenants' resources a compile-time-looking mistake
+rather than a silent runtime one.
 
 ```java
 import static dev.whitewater.model.ReaderStart.*;   // Beginning, End
@@ -93,9 +58,7 @@ shop.getFeeds("order");                           // prefix-filtered Feed handle
 shop.readers(); shop.writers(); shop.subscriptions();
 
 // Everything a service needs hangs off the Domain:
-var writer = shop.createWriter("orders")
-        .writerId("ingest")
-        .open();
+var writer = shop.feed("orders").writer("ingest");   // durable producer identity — required
 var reader = shop.createReader("orders")
         .readerId("fulfillment")                    // durable consume identity
         .readerStartPoint(Beginning)                // first-time start position
@@ -145,7 +108,60 @@ Formats today: `json`, `jsonschema`, `avro`, `protobuf`, `text`, `bytes`, or `cu
 compatibility enforcement is still a no-op, so treat declarations as
 documentation/tooling metadata until the registry contract lands.
 
-## Permanent consumers — the Kafka loop, minus the plumbing
+## Working with Feeds
+
+### Reading — durable Readers and ad-hoc fetches
+
+A **Reader** owns a durable, server-side Cursor — the progress identity
+that survives restarts, exactly like a committed Kafka group offset but
+without the group protocol:
+
+```java
+var reader = shop.createReader("orders")
+        .readerId("fulfillment")            // durable consume identity
+        .readerStartPoint(Beginning)        // first-time start position
+        .maxPageSize(250)
+        .open();
+var page = reader.fetch();                  // up to maxPageSize records
+for (var r : page.records()) handle(r);
+reader.ack();                               // commits the delivered frontier
+reader.close();                             // releases the session fence
+```
+
+`readerStartPoint` applies only when the Reader is *first declared* —
+an existing `readerId` resumes its acknowledged frontier
+(`auto.offset.reset` semantics). `reader.listen(m -> handle(m))` runs
+the same fetch→ack cycle on an SDK-owned thread and returns a `Pump`
+handle (`failure()` surfaces handler errors; `close()` stops cleanly
+with the last page unacked → replayed).
+
+For ad-hoc reads without a durable identity, `domain.feedOps()` covers
+committed history: `records(feed, limit, after)`, `temporaryFetch` with
+`tail`/`wait_ms` long-poll and `after_event_time_ns` seeks, and
+`load(feed, start, sink)` one-shot history replays.
+
+### Shared progress — subscriptions and members
+
+A named **Subscription** is the durable shared frontier cooperating
+readers claim work against — the Kafka consumer-group model, minus the
+rebalance storm. `domain.subscription(name)` returns a `SubscriptionRef`
+for declaration-level operations (`seek`, `memberState`, `progress`);
+`domain.member(sub)` joins a member and runs the work loop:
+
+```java
+var member = shop.member("orders-sub");
+var work = member.claim();                  // RF3-fenced work lease
+var page = member.fetch(work, 256);         // records for this member
+member.ack(work, page);                     // commits shared progress
+member.release(work);                       // or transfer(work, otherMember, null)
+```
+
+Leases are fenced — a lost or expired claim is refused, and work
+transfers cleanly to another member. `seek(position|timestamp|cursor)`
+repositions the shared frontier and is refused while a member work
+lease is active.
+
+### The read loop — consumers
 
 `feed.consumer(name)` is the durable-Reader equivalent of
 `while (true) consumer.poll(...)`: per-record delivery, internal
@@ -159,61 +175,198 @@ Runtime.getRuntime().addShutdownHook(new Thread(consumer::close));
 consumer.run();          // blocks until close() — that's the whole loop
 ```
 
-Semantics: `run()` throws only for *startup* refusals (bad names, auth)
-— Kafka-style fail-fast. After the first open, a dead session re-opens
-and resumes from the Reader's durable acked cursor — the app never
-manages offsets. A handler exception leaves its page unacked so it
-redelivers (at-least-once; route poison pills to a DLQ feed yourself).
-`consumer.runAsync()` runs the same loop on a thread for several
-consumers.
+`run()` throws only for *startup* refusals (bad names, auth) —
+Kafka-style fail-fast. After the first open, a dead session re-opens
+and resumes from the Reader's durable acked cursor. A handler exception
+leaves its page unacked so it redelivers (at-least-once; route poison
+pills to a DLQ feed yourself). `consumer.runAsync()` runs the same loop
+on a thread for several consumers; `domain.subscribe(reader, feed,
+start, onRecords)` is the lighter managed pump when you don't need
+consumer supervision knobs.
 
-Store lookups strip the row wrapper when you just want the value:
+### Writing
 
 ```java
-var user = users.find(email)                         // Optional<UserProfile>
-        .or(() -> users.findBy("user_id", id));      // named-key fallback
-counters.put(bucket, counters.getOrDefault(bucket, 0L) + 1);
+record Order(String id, int total) {}
+
+var writer = orders.writer("ingest");          // one call — declares, binds codecs
+writer.write("order-42", new Order("order-42", 99),
+        result -> ack(result.messageId()));                    // per-record ack callback
+writer.write("order-43", new Order("order-43", 20))
+        .thenAccept(r -> commit(r.cursor()));                  // or the CompletableFuture
+writer.close();                                                // flushes what is queued
 ```
 
-A complete enrichment service — read → store lookup + named-key
-fallback → enriched feed or DLQ → counters — is in
-[examples/EnrichUsers.java](examples/EnrichUsers.java).
+`write()` is the default produce path — always asynchronous. The call
+returns a `CompletableFuture<AppendResult>` (or fires your callback)
+once the record is **majority-committed** — RF3 means at least 2 of 3
+Nodes durably hold it, and `result.durability()` reports the mode. The
+`AppendResult` is the acknowledgement: `messageId()` (the record's
+committed identity), `cursor()`, `deduplicated()`, and server
+`feedback()`.
 
-The store lives on the Nodes — the SDK holds no local copy. See
-[docs/stores.md](docs/stores.md) for the full store guide and
-[docs/pipes.md](docs/pipes.md) for managed stream jobs
-(forward/enrich/window) built on subscriptions and stores.
+Under the hood a daemon sender coalesces queued records into
+`append-batch` commits — you never think about batching. Tune the
+tradeoff on the builder: `linger(Duration)` (how long a batch stays
+open for more records, default 5ms) and `maxBatchRecords(int)` (flush
+early at a size bound, default 256). The session's fencing epoch binds
+lazily on the first write — an idle handle holds no epoch — and
+`close()` flushes queued writes before returning, so use
+try-with-resources or a shutdown hook.
 
-Errors surface as `WhitewaterException` subtypes mapped from wire `code`
-values (`stale_epoch`, `lease.busy`, `lease.stale_lease`,
-`writer.stale_sequence`, `control.unavailable`, ...). Retryable transient
-refusals and genuinely ambiguous results (status + timeout) are distinct
-subtypes — never lumped together.
-
-Cursors are opaque: the SDK never parses, orders, or constructs them.
-`event_time_ns`/`ingest_time_ns` are signed 64-bit nanoseconds and travel
-as decimal strings on the wire.
-
-## Pipes, indexes, and operations
-
-Managed Pipes and replicated Indexes share the same topology-free model —
-names, never partitions or Nodes:
+The manual forms stay for when you need them: `append(key, value)`
+blocks until the commit lands, `appendBatch`/`appendAll` put a group of
+records in one commit, `appendAsync` is the non-coalescing future form,
+and `reopen()` rebinds a fresh epoch after a fenced `StaleSession`:
 
 ```java
-// Pipe declaration inside the Domain: names resolve in-domain (orders.relay
-// is ops.orders.relay when declared on ops), and cross-Domain endpoints
-// ride on ScopedRef — a Feed/StateStore/SubscriptionRef handle, or
-// Scoped.absolute. The server owns panes, leases and the effect journal.
+writer.append("order-42", new Order("order-42", 99));
+writer.append(FeedEvent.of("order-43", payload).withEventTimeNs(eventTimeNs));
+writer.appendBatch(List.of(e1, e2));
+writer.reopen();
+```
+
+`writerId` is required because it's the Writer's transactional identity,
+not a label: the fencing epoch binds to it (a second process binding
+`ingest` fences the first, so a partitioned zombie can't double-commit)
+and the retry-dedup ledger lives under it — the `request_id` on every
+record deduplicates a timed-out retry, while reusing an id with
+different contents is refused. `useCompression()` opts into LZ4; record
+`event_time_ns`/`ingest_time_ns` are signed 64-bit epoch nanoseconds
+(decimal strings on the wire).
+
+## Working with StateStores
+
+StateStores are durable, replicated key/value views that live on the
+Nodes — the SDK holds no local copy. Declare named keys up front and
+each becomes a maintained secondary index.
+
+### Declaring a store — named keys
+
+```java
+var accounts = client.createDomain("accounts");
+var spec = StateStoreSpec.named("employees")            // → accounts.employees
+        .addUniqueKey("passport")                     // one row per value
+        .addNonUniqueKey("department");               // value → many rows
+var store = accounts.defineStateStore(spec, null);    // durable store on the Nodes
+```
+
+**Unique** (`passport`, `email`, `order_number`) — one value maps to at
+most one row; `getBy` returns the single match and a second claim on the
+same value arbitrates first-committed-wins. **Non-unique**
+(`department`, `status`, `region`) — one value maps to many rows;
+`getBy` returns every match as a bounded page. Up to 10 named keys,
+declared at creation.
+
+Two store kinds: **manual** (your app puts rows — no extractor) and
+**feed-sourced** (the Nodes replay a source Feed and project rows +
+postings via `Extractor.recordKey()`, `Extractor.metadata("x")`,
+`Extractor.json("$.path")` — required on feed-sourced keys, refused on
+manual ones).
+
+### Putting and deleting
+
+The preferred form carries postings in a typed **KeySet** — one small
+class per store, extending `AbstractStoreKeySet` with a setter per named
+key (each just delegates to the inherited `put(name, value)`):
+
+```java
+final class PassportKeySet extends AbstractStoreKeySet {
+    PassportKeySet passport(String v)   { return put("passport", v); }
+    PassportKeySet department(String v) { return put("department", v); }
+    static PassportKeySet with(String passport, String department) {
+        return new PassportKeySet().passport(passport).department(department);
+    }
+    static PassportKeySet of(Consumer<PassportKeySet> builder) {
+        var ks = new PassportKeySet();
+        builder.accept(ks);
+        return ks;
+    }
+}
+```
+
+Then every posting style is compile-checked against the store's named
+keys:
+
+```java
+store.put("emp-1", payload, PassportKeySet.with("P123", "eng"));              // factory
+store.put("emp-1", payload, PassportKeySet.of(k -> k.passport("P123").department("eng")));
+store.put("emp-1", payload, new PassportKeySet().passport("P123").department("eng"));
+store.withKeySet(PassportKeySet.class)
+     .put("emp-1", payload, k -> k.passport("P123").department("eng"));       // bound lambda
+store.put("emp-1", payload, "P123");                              // single named key
+store.put("emp-1", payload, Map.of("passport", "P123", "department", "eng")); // raw map — no checking
+
+store.delete("emp-1");                        // mutation id generated
+store.delete("emp-1", stableMutationUuid);    // stable id — dedup retries
+store.clear();                                // one journaled ClearAll
+```
+
+Every mutation carries an idempotent `mutation_id` — generated per call,
+or pinned for caller-driven retries.
+
+### Reading
+
+```java
+import dev.whitewater.model.IndexPredicate.IndexBound;   // posting ranges
+
+var row = store.get("emp-1");                      // StoreRow | null + freshness
+var fresh = store.getStrict("emp-1");              // bounded-waits for the
+                                                  // committed frontier
+var user = users.find(email)                       // Optional<Employee>
+        .or(() -> users.findBy("user_id", id));    // named-key fallback
+var n = counters.getOrDefault(bucket, 0L);         // counters, one line
+
+var rows = store.getBy("department", "eng");                   // every match
+var page = store.getBy("department", "eng",
+        IndexBound.inclusive(100), IndexBound.exclusive(200), 25);  // ranged
+var strict = store.getByStrict("department", "eng", Duration.ofSeconds(5));
+
+store.iterate(r -> export(r));                   // primary-key order
+var page = store.page(afterKey, 256);            // one bounded page
+```
+
+`row.freshness()`/`rows.freshness()` is **evidence, not a required step**: `appliedSeq` /
+`committedSeq` / `behind` report whether the serving replica answered
+behind its committed frontier, and `servedBy` names it — the handles
+you want when a read looks stale. `get`/`getBy` read immediately;
+`getStrict`/`getByStrict` bounded-wait for the replica to apply its
+committed frontier rather than answering stale. A complete enrichment
+service — read → store lookup + named-key fallback → enriched feed or
+DLQ → counters — is in [examples/EnrichUsers.java](examples/EnrichUsers.java).
+See [docs/stores.md](docs/stores.md) for the full store guide.
+
+## Working with Pipes
+
+Managed Pipes are server-run stream jobs: you declare the business
+shape — source Subscription, output Feed, operation — and the server
+owns the subscription frontier, compute lease, panes, and the effect
+journal. Cross-Domain endpoints ride on `ScopedRef`: a
+`Feed`/`StateStore`/`SubscriptionRef` handle or `Scoped.absolute`.
+
+### Simple — forwarding
+
+```java
 var ops = client.domain("ops");
-var crm = client.domain("crm");
 ops.defineForwardPipe("orders.relay",
         Scoped.relative("orders-sub"), ops.feed("orders.relayed"));
+```
+
+### Enrichment — StateStore lookups
+
+```java
+var crm = client.domain("crm");
 ops.defineEnrichPipe("orders.enrich",
         Scoped.relative("orders-sub"), ops.feed("orders.enriched"),
         crm.stateStore("customers"),                       // cross-Domain lookup
         PipeOperation.enrich(Extractor.recordKey(),
             EnrichFreshness.LATEST, null, EnrichMiss.QUARANTINE),
         ops.feed("orders.enrich-dlq"));
+```
+
+### Time-based — windowing
+
+```java
 ops.defineWindowPipe("orders.hourly",
         Scoped.relative("orders-sub"), Scoped.relative("stats.orders-hourly"),
         PipeOperation.window(Time.h(1),   // 1h panes
@@ -225,12 +378,15 @@ ops.defineWindowPipe("orders.hourly",
             Time.h(2),            // expire
             null, null),          // keyLimit, byteLimit
         ops.feed("orders.hourly-emitted"));
+```
 
+### Indexes and observability
+
+```java
 // Pipe lifecycle: describe, pause, resume, drop.
 var pipe = ops.pipe("orders.relay");
 PipeInfo info = pipe.describe();   // stage, operation, outputs, status
-pipe.pause();
-pipe.resume();
+pipe.pause(); pipe.resume();
 List<PipeInfo> all = ops.pipeInfos();
 
 // Index queries: exact, prefix, or range predicates over decoded rows.
@@ -243,9 +399,9 @@ IndexPage page = crm.queryIndex(
         50,        // limit
         true,      // strict: wait for the committed target rather than stale
         null);     // wait_ms
-for (var row : page.rows()) { /* key + payload bytes, applied cursor */ }
+for (var r : page.rows()) { /* key + payload bytes, applied cursor */ }
 
-// Demand observability: typed rows + raw domain rollups.
+// Demand observability: typed rows + per-domain rollups.
 DemandReport feeds = client.demandFeeds();
 for (DemandRow row : feeds.rows()) {
     long appended = row.counter("appended_records");
@@ -257,37 +413,21 @@ List<HotKey> hot = client.hotKeys();   // dominant-key evidence per feed
 
 Pipe operation definitions stay opaque JSON so server-side operation
 variants evolve without an SDK bump; `queryIndex` and the raw
-`demand(surface)` JsonNode methods remain the escape hatches.
+`demand(surface)` JsonNode methods remain the escape hatches. See
+[docs/pipes.md](docs/pipes.md) for the full managed-job guide.
 
-## API surface
+## Errors, cursors, and time
 
-Everything the SDK exposes, grouped by capability. The typed surface
-(`Domain` → `Feed` → writer/reader/consumer) covers the daily path;
-`Commands`, `wcl`, and the `*SessionClient`/`Member` classes are the
-explicit escape hatches for the same wire contract.
+Errors surface as `WhitewaterException` subtypes mapped from wire `code`
+values (`stale_epoch`, `lease.busy`, `lease.stale_lease`,
+`writer.stale_sequence`, `control.unavailable`, ...). Retryable transient
+refusals and genuinely ambiguous results (status + timeout) are distinct
+subtypes — never lumped together.
 
-| Area | API |
-|---|---|
-| Client & transport | `WhitewaterClient.builder().apiKey(..).endpoints(..).timeout(..)` · `healthy()` `health()` `checkCompatible()` · `close()` |
-| Domains — the only door | `createDomain(name)` declare + handle · `domain(name)` lazy / `getDomain(name)` eager · `feeds()` `getFeeds(prefix)` `feedNames()` · `feed(..)`/`getFeed(..)` handles · `createFeed(relative)` `createReader(relative)` `createWriter(relative)` — declare/open inside the Domain · `readers()` `writers()` `subscriptions()` `pipes()` `indexes()` `stateStores()` · `describe()` `historyPolicy()` `domainId()` `revision()` · `refresh()` · `describeDomain` `renameDomain` `dropDomain` `listDomains` on the client |
-| Schemas | `domain.setSchema()` `clearSchema()` · `domain.setFeedSchema(name, …)` `clearFeedSchema(name)` · `domain.schema()` `feedSchema()` `declaredFeedSchema()` · `SchemaDecl`/`FeedSchema` — `json`, `jsonschema`, `avro`, `protobuf`, `text`, `bytes`, `custom.<name>` |
-| Feeds | `domain.feed(name[, keyType/Codec, valueType/Codec])` → `Feed<K,V>` · `useCompression()` · `records()` `fetch(..)` · `writer(..)` `append(..)` `reader(..)` `subscribe(..)` `consumer(..)` · `domain.feedOps()` raw-byte escape hatch |
-| Writing | `FeedWriter.append(k, v)` / `append(k, v, metadata)` / `append(FeedEvent)` (event time + Metadata) · `appendBatch`/`appendAll` · `appendAsync` · `reopen()` `sessionEpoch()` `useCompression()` · idempotent `request_id` · `domain.writer(name)` `domain.writerSession(name, epoch)` sessions |
-| Reading | `FeedReader.listen(handler)` SDK-owned pump thread → `Pump` (`close()` `failure()` `running()`) · `forEach(handler)` blocking pump · `forEachWhile` early-stop · `fetch([limit])` `ack()` `ack(cursor)` `acknowledgedCursor()` `close()` · durable `readerId` · `ReaderStart` — `Beginning`, `End`, `Now`, `cursor`, `timestamp(Instant)` · `domain.reader(name, cap)` `domain.readerSession(name)` `domain.seekReader(name, start)` |
-| Temporary fetches | `Feed.fetch(after, limit)` / `domain.feedOps().temporaryFetch(feed, options)` — `after_event_time_ns` seeks, `new_only`, `tail` + `wait_ms` long-poll · `feedOps().load(feed, start, sink)` |
-| Consumers | `feed.consumer(reader)` → `FeedConsumer`: `startAt(..)` `maxPageSize(..)` `onRecord(..)` `onError(..)` `backoff(..)` `runAsync()` `lastError()` `close()` · `domain.subscribe(reader, feed, start, onRecords)` managed loop |
-| Subscription members | `domain.member(name)` → `Member`: `claim([workId, leaseTicks])` `renew` `release` `transfer` `fetch(work, limit)` `ack(work, page)` — shared progress + RF3 work leases · `domain.memberClient(name)` raw member client · `domain.subscription(name)` → `seek` `memberState` `progress` |
-| StateStores | `domain.stateStore(name[, class/Codec])` → `StateStore<K,V>`: `put` `get`/`getStrict` `find` `findBy` `getOrDefault` `getBy`/`getByStrict` `delete` `page` `iterate` `clear` `sync` `rebuild` · `view(codecs)` · `domain.defineStateStore(spec, source)` `domain.dropStateStore(name)` |
-| Indexes | `domain.queryIndex(name, IndexPredicate)` → `IndexPage` · `IndexPredicate.exact/prefix/range` + `IndexBound` · declared via `Commands.defineIndex` `getIndex` `rebuildIndex` |
-| Pipes | `domain.pipe(name)` → `describe` `pause` `resume` `drop` · `domain.pipeInfos()` · `domain.defineForwardPipe` `defineEnrichPipe` `defineWindowPipe(Time, Extractor, WindowAggregation, WindowTime, ...)` — endpoints as `ScopedRef` (`Scoped.relative`, `Scoped.absolute`, or Feed/StateStore/SubscriptionRef handles) so Pipes can cross Domains explicitly |
-| Catalog lifecycle | `domain.create*` `describe*` `rename*` `drop*` `list*` for Feed, Writer, Reader, Subscription — names resolve inside the Domain · `client.listDomains` `listRoles` `listGrants` `createRole`/`describeRole`/`renameRole`/`dropRole` · `domain.openWriterSession` `domain.seekReader` |
-| Auth | `Commands.grant` `revokeGrant` `issueApiKey` `revokeApiKey` `explainAccess` · `Permission`/`GrantEffect` |
-| Observability | `demandFeeds()` `demandReaders()` `demandSubscriptions()` `demandIndexes()` `demandPipes()` `demand(surface)` → `DemandReport`/`DemandRow` · `hotKeys()` `demandHotKeys(feed)` → `HotKey` · `nodeMetrics()` `clusterMembers()` `subscriptionProgress(name)` |
-| Storage admin | `Commands.registerStorageNode` `drainStorageNode` `undrainStorageNode` `retireStorageNode` `inspectStorageDrain` `reportStorageNodeCapacity` · `inspectPlacement(feed)` |
-| Escape hatches | `wcl(script)` `wclAsync` · `commands(Commands.of()...)` fluent batch · `commands(List<Map>)` raw · `domain.feedOps()` byte-level feed ops · `domain.writerSession` `domain.readerSession` `domain.memberClient` byte-level sessions |
-| Errors | `WhitewaterException` — `.Refused` `.StaleSession` `.AmbiguousResult` `.Conflict` `.Unavailable` `.LeaseConflict` · `code()` carries the wire `code` |
-| Time & durations | `Time.h/.m/.s/.ms/.us/.ns/.d/.of(Duration)` for windows + delivery delays · absolute times stay epoch-ns decimal strings |
-| Testing | `FakeRiverbed.start()` — loopback HTTP Riverbed implementing the real wire contract (dedup, epochs, at-least-once reads, stores, WCL/commands) |
+Cursors are opaque: the SDK never parses, orders, or constructs them.
+`event_time_ns`/`ingest_time_ns` are signed 64-bit nanoseconds and travel
+as decimal strings on the wire — `Time.h/.m/.s/.ms/.us/.ns/.d/.of(Duration)`
+covers window and delay declarations; absolute times stay epoch-ns.
 
 ## Build
 
@@ -330,3 +470,74 @@ mvn verify
 A scenario whose `op` the SDK cannot express fails explicitly with
 `UnsupportedOperationException` rather than silently skipping — that is a
 spec-required signal, not a bug.
+
+## Full API surface
+
+Everything the SDK exposes, grouped by capability. The typed surface
+(`Domain` → `Feed` → writer/reader/consumer) covers the daily path —
+binding `domain.feed(name, Order.class)` or
+`domain.stateStore(name, Employee.class)` to a codec is the
+**read-with-schema / write-with-schema** story: records and store rows
+serialize both directions with no `getBytes()` in application code.
+`Commands`, `wcl`, and the `*SessionClient`/`Member` classes are the
+explicit escape hatches for the same wire contract.
+
+| Method | Parameters | Description |
+|---|---|---|
+| **Client & transport** | | |
+| `WhitewaterClient.builder()…build()` | `apiKey`, `endpoints(URI…)`, `timeout` | Client + transport construction |
+| `healthy()` `health()` `checkCompatible()` `close()` | — | Liveness, protocol compatibility, shutdown |
+| **Domains — the only door** | | |
+| `createDomain(name)` | relative name | Declare + return eager handle |
+| `domain(name)` / `getDomain(name)` | relative name | Lazy / eager Domain handle |
+| `feed(name[, keyType, valueType])` `getFeed(name)` | name, `Class`/Codec pairs | Typed `Feed<K,V>` handle |
+| `createFeed` `createReader` `createWriter` | relative name | Declare + open inside the Domain |
+| `feeds()` `getFeeds(prefix)` `feedNames()` | optional prefix | Feed catalog views |
+| `readers()` `writers()` `subscriptions()` `pipes()` `indexes()` `stateStores()` | — | Domain catalog lists |
+| `describe()` `domainId()` `revision()` `historyPolicy()` `refresh()` | — | Domain metadata |
+| `describeDomain` `renameDomain` `dropDomain` `listDomains` | name | Client-level Domain lifecycle |
+| `setSchema` `clearSchema` `setFeedSchema` `clearFeedSchema` `schema` `feedSchema` `declaredFeedSchema` | `FeedSchema`/`SchemaDecl` — `json`, `avro`, `protobuf`, `text`, `bytes`, `custom.<name>` | Record-schema declarations |
+| **Feeds** | | |
+| `records(limit, after)` `fetch(after, limit)` | page bound, cursor | Committed history reads |
+| `writer(name)` `reader(name, capacity)` `subscribe(...)` `consumer(name)` | relative name, options | Bound sessions + loops |
+| `useCompression()` | — | LZ4 on subsequent writes |
+| `domain.feedOps()` | — | Raw-byte escape hatch |
+| **Writing** | | |
+| `write(k, v)` `write(k, v, callback)` `write(FeedEvent)` | key, value, `Consumer`/`BiConsumer` | Async default — `AppendResult` on majority commit; coalesced by `linger`/`maxBatchRecords` |
+| `append(k, v)` `append(k, v, metadata)` `append(FeedEvent)` | key, value, Metadata/event | Blocking single write |
+| `appendBatch(events)` `appendAll(events)` `appendAsync(k, v)` | `List<FeedEvent>` | One commit / non-coalescing future |
+| `reopen()` `sessionEpoch()` `useCompression()` `pending()` `close()` | — | Session + pipeline lifecycle |
+| `domain.writer(name)` `domain.writerSession(name, epoch)` | name, epoch | Byte-level writer sessions |
+| **Reading** | | |
+| `fetch([limit])` `ack()` `ack(cursor)` `acknowledgedCursor()` `close()` | page bound, cursor | Manual durable-Reader loop |
+| `listen(handler)` → `Pump` `forEach` `forEachWhile` | record handler | SDK-owned read loop |
+| `ReaderStart` | `Beginning` `End` `Now` `cursor` `timestamp` | First-declare start position |
+| `domain.reader(name, cap)` `readerSession(name)` `seekReader(name, start)` | name, capacity, start | Byte-level reader sessions |
+| `feedOps().temporaryFetch(feed, options)` `load(feed, start, sink)` | `after_event_time_ns`, `tail`, `wait_ms` | Ad-hoc + replay reads |
+| `feed.consumer(name)` → `FeedConsumer` | `startAt` `maxPageSize` `onRecord` `onError` `backoff` | Supervised durable consumer |
+| `domain.subscribe(reader, feed, start, onRecords)` | names, handler | Managed pump loop |
+| **Subscription members** | | |
+| `domain.member(name)` → `Member` | `claim([workId, leaseTicks])` `renew` `release` `transfer` `fetch(work, limit)` `ack(work, page)` | Shared progress + RF3 work leases |
+| `domain.subscription(name)` `domain.memberClient(name)` | `seek` `memberState` `progress` | Declaration ops + raw member client |
+| **StateStores** | | |
+| `defineStateStore(spec, source)` `dropStateStore(name)` `stateStore(name[, codecs])` | spec, source Feed, `Class`/Codec | Store lifecycle + typed handle |
+| `put` `delete` `clear` | key, payload, named-key postings | Mutations |
+| `get` `getStrict` `find` `findBy` `getOrDefault` `getBy` `getByStrict` `page` `iterate` | key, named key, bounds, wait | Row + named-key reads |
+| `sync` `rebuild` `view(codecs)` | — | Store administration |
+| **Indexes** | | |
+| `queryIndex(name, predicate)` | `IndexPredicate` + `IndexBound`, limit, strict, wait | Decoded index rows |
+| `Commands.defineIndex` `getIndex` `rebuildIndex` | name, extractor | Index lifecycle |
+| **Pipes** | | |
+| `defineForwardPipe` `defineEnrichPipe` `defineWindowPipe` | name, `ScopedRef` source/output, operation | Managed jobs |
+| `pipe(name)` `pipeInfos()` | — | `describe` `pause` `resume` `drop` |
+| **Auth** | | |
+| `Commands.grant` `revokeGrant` `issueApiKey` `revokeApiKey` `explainAccess` | principal, `Permission`, `GrantEffect` | Access control |
+| **Observability** | | |
+| `demandFeeds` `demandReaders` `demandSubscriptions` `demandIndexes` `demandPipes` `demand(surface)` `hotKeys` `demandHotKeys(feed)` `nodeMetrics` `clusterMembers` `subscriptionProgress` | surface, feed, name | Demand + hot-key evidence |
+| **Storage admin** | | |
+| `registerStorageNode` `drainStorageNode` `undrainStorageNode` `retireStorageNode` `inspectStorageDrain` `reportStorageNodeCapacity` `inspectPlacement` | node, feed | Storage operations |
+| **Escape hatches, errors, time** | | |
+| `wcl(script)` `wclAsync` `commands(...)` `feedOps()` `writerSession` `readerSession` `memberClient` | script, typed/raw commands | Byte-level wire access |
+| `WhitewaterException` | `code()` | `.Refused` `.StaleSession` `.AmbiguousResult` `.Conflict` `.Unavailable` `.LeaseConflict` |
+| `Time.h/.m/.s/.ms/.us/.ns/.d/.of(Duration)` | duration | Window + delay declarations |
+| `FakeRiverbed.start()` | — | Loopback wire-contract test double |
