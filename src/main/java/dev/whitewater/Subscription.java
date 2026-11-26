@@ -118,6 +118,9 @@ public final class Subscription implements AutoCloseable {
             }
         } catch (WhitewaterException e) {
             if (running) {
+                // Mark terminal before user code runs: a callback that
+                // unblocks an observer must not leave isRunning() true.
+                running = false;
                 failure = e;
                 if (onError != null) {
                     onError.accept(e);
