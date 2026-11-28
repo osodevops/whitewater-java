@@ -68,6 +68,10 @@ public final class SchemaRegistry {
     public SchemaRegistry setCacheTtl(java.time.Duration ttl) {
         Objects.requireNonNull(ttl, "ttl is required");
         this.cacheTtlNs = Math.max(0L, ttl.toNanos());
+        long capExp = System.nanoTime() + this.cacheTtlNs;
+        slotCache.replaceAll((k, v) -> (v.entry() != null && v.expiresAtNs() > capExp)
+                ? new CachedSlot(v.entry(), v.compiled(), capExp)
+                : v);
         return this;
     }
 

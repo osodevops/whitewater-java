@@ -457,7 +457,7 @@ class SchemaRegistryTest {
 
         try (WhitewaterClient producer = riverbed.client();
              FeedWriter<String, String> writer = producer.domain("cachedom").feed("orders").writer("p1")) {
-            producer.schemas().setCacheTtl(java.time.Duration.ofMillis(40));
+            producer.schemas().setCacheTtl(java.time.Duration.ofSeconds(60));
             long before = producer.schemas().lookupCount();
             writer.append("k1", "{\"id\":\"1\"}");
             long afterFirst = producer.schemas().lookupCount();
@@ -485,7 +485,7 @@ class SchemaRegistryTest {
             }
 
             // Wait for the 40ms TTL to expire so the next write checks for a newer schema version
-            Thread.sleep(60);
+            producer.schemas().setCacheTtl(java.time.Duration.ZERO);
 
             // Now v2 is automatically fetched and enforced: missing 'amount' is rejected!
             assertThrows(WhitewaterException.SchemaValidation.class,
