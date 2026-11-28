@@ -152,6 +152,7 @@ public final class FeedClient {
     public AppendResult append(String feed, FeedAppend record) {
         Objects.requireNonNull(feed, "feed");
         Objects.requireNonNull(record, "record");
+        transport.schemaRegistry().validateResourceWrite(feed, record.key(), record.payload());
         ObjectNode body = Wire.feedAppendRequest(feed, record);
         if (compression) {
             body.put("use_compression", true);

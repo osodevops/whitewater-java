@@ -31,6 +31,12 @@ public final class Transport {
     private final String apiKey;
     private final HttpClient http;
     private final AtomicInteger next = new AtomicInteger();
+    private final dev.whitewater.schema.SchemaRegistry schemaRegistry =
+            new dev.whitewater.schema.SchemaRegistry(this);
+
+    public dev.whitewater.schema.SchemaRegistry schemaRegistry() {
+        return schemaRegistry;
+    }
 
     public Transport(List<URI> endpoints, String apiKey, Duration timeout) {
         if (endpoints.isEmpty()) {

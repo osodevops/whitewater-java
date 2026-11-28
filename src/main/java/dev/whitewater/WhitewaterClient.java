@@ -195,7 +195,10 @@ public final class WhitewaterClient implements AutoCloseable {
 
     /** {@code CREATE WRITER <name> TO <feed>} */
     ControlExecution createWriter(String name, String feed) {
-        return wcl("CREATE WRITER " + resource(name) + " TO " + dotted(feed));
+        String rName = resource(name);
+        String fName = dotted(feed);
+        transport.schemaRegistry().registerWriterFeed(rName, fName);
+        return wcl("CREATE WRITER " + rName + " TO " + fName);
     }
 
     /** {@code CREATE READER <name> FROM <feed>} — starts at BEGINNING. */
@@ -869,6 +872,93 @@ public final class WhitewaterClient implements AutoCloseable {
     /** Collection-level StateStore operations: declare, drop. */
     StateStoresClient stateStores() {
         return new StateStoresClient(transport);
+    }
+
+    public dev.whitewater.schema.SchemaRegistry schemas() {
+        return transport.schemaRegistry();
+    }
+
+    public dev.whitewater.schema.SchemaEntry updateSchema(
+            String resource, String definition,
+            dev.whitewater.schema.SchemaTarget target, dev.whitewater.schema.SchemaType type) {
+        return transport.schemaRegistry().updateSchema(resource, definition, target, type, null);
+    }
+
+    public dev.whitewater.schema.SchemaEntry updateSchema(
+            String resource, String definition,
+            dev.whitewater.schema.SchemaTarget target, dev.whitewater.schema.SchemaType type,
+            dev.whitewater.schema.SchemaCompatibility compatibility) {
+        return transport.schemaRegistry().updateSchema(resource, definition, target, type, compatibility);
+    }
+
+    public dev.whitewater.schema.SchemaEntry updateSchema(
+            ScopedRef resource, String definition,
+            dev.whitewater.schema.SchemaTarget target, dev.whitewater.schema.SchemaType type) {
+        Objects.requireNonNull(resource, "resource is required");
+        return updateSchema(resource.resolve(null), definition, target, type);
+    }
+
+    public java.util.Optional<dev.whitewater.schema.SchemaEntry> getSchema(
+            String resource, dev.whitewater.schema.SchemaTarget target) {
+        return transport.schemaRegistry().getSchema(resource, target);
+    }
+
+    public java.util.Optional<dev.whitewater.schema.SchemaEntry> getSchema(
+            ScopedRef resource, dev.whitewater.schema.SchemaTarget target) {
+        Objects.requireNonNull(resource, "resource is required");
+        return getSchema(resource.resolve(null), target);
+    }
+
+    public List<dev.whitewater.schema.SchemaEntry> listSchemas() {
+        return transport.schemaRegistry().listSchemas();
+    }
+
+    public dev.whitewater.schema.SchemaCompatibilityResult checkSchemaCompatibility(
+            String resource, String definition,
+            dev.whitewater.schema.SchemaTarget target, dev.whitewater.schema.SchemaType type) {
+        return transport.schemaRegistry().checkCompatibility(resource, definition, target, type);
+    }
+
+    public dev.whitewater.schema.SchemaEntry updateSchemaCompatibility(
+            String resource, dev.whitewater.schema.SchemaTarget target,
+            dev.whitewater.schema.SchemaCompatibility compatibility) {
+        return transport.schemaRegistry().updateCompatibility(resource, target, compatibility);
+    }
+
+    public dev.whitewater.schema.SchemaEntry linkSchema(
+            String sourceResource,
+            dev.whitewater.schema.SchemaTarget sourceTarget,
+            String linkedResource,
+            dev.whitewater.schema.SchemaTarget linkedTarget) {
+        return transport.schemaRegistry().linkSchema(sourceResource, sourceTarget, linkedResource, linkedTarget);
+    }
+
+    public dev.whitewater.schema.SchemaEntry unlinkSchema(
+            String sourceResource,
+            dev.whitewater.schema.SchemaTarget sourceTarget,
+            String linkedResource,
+            dev.whitewater.schema.SchemaTarget linkedTarget) {
+        return transport.schemaRegistry().unlinkSchema(sourceResource, sourceTarget, linkedResource, linkedTarget);
+    }
+
+    public dev.whitewater.schema.SchemaEntry replicateSchemaTo(
+            WhitewaterClient targetClient,
+            String sourceCluster,
+            String resource,
+            dev.whitewater.schema.SchemaTarget target) {
+        Objects.requireNonNull(targetClient, "targetClient is required");
+        var entry = getSchema(resource, target)
+                .orElseThrow(() -> new WhitewaterException.Refused(
+                        404, "schema.not_found", "Schema not found for " + target.registryKey(resource)));
+        return targetClient.schemas().replicateEntry(entry, sourceCluster);
+    }
+
+    public boolean removeSchema(String resource, dev.whitewater.schema.SchemaTarget target) {
+        return transport.schemaRegistry().removeSchema(resource, target);
+    }
+
+    public void refreshSchemas() {
+        transport.schemaRegistry().refreshCache();
     }
 
     @Override

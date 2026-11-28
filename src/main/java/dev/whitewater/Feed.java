@@ -237,7 +237,36 @@ public final class Feed<K, V> implements ScopedRef {
     }
 
     /** Declare the Writer when missing; an existing Writer is reused as-is. */
+    /** Associate or evolve a schema for this Feed's {@code KEY} or {@code MESSAGE}. */
+    public dev.whitewater.schema.SchemaEntry updateSchema(
+            String definition,
+            dev.whitewater.schema.SchemaTarget target,
+            dev.whitewater.schema.SchemaType type) {
+        return client.updateSchema(name, definition, target, type);
+    }
+
+    /** Associate or evolve a schema for this Feed with explicit compatibility mode. */
+    public dev.whitewater.schema.SchemaEntry updateSchema(
+            String definition,
+            dev.whitewater.schema.SchemaTarget target,
+            dev.whitewater.schema.SchemaType type,
+            dev.whitewater.schema.SchemaCompatibility compatibility) {
+        return client.updateSchema(name, definition, target, type, compatibility);
+    }
+
+    /** Look up the schema associated with this Feed's {@code KEY} or {@code MESSAGE}. */
+    public java.util.Optional<dev.whitewater.schema.SchemaEntry> getSchema(
+            dev.whitewater.schema.SchemaTarget target) {
+        return client.getSchema(name, target);
+    }
+
+    /** Remove the schema associated with this Feed's {@code KEY} or {@code MESSAGE}. */
+    public boolean removeSchema(dev.whitewater.schema.SchemaTarget target) {
+        return client.removeSchema(name, target);
+    }
+
     void ensureWriter(String writerName) {
+        client.transport().schemaRegistry().registerWriterFeed(writerName, name);
         try {
             client.createWriter(writerName, name);
         } catch (WhitewaterException.Refused | WhitewaterException.Unavailable e) {

@@ -82,7 +82,17 @@ public final class StateStore<K, V> implements ScopedRef {
 
     static <K, V> StateStore<K, V> bound(
             Transport transport, String name, Codec<K> keyCodec, Codec<V> payloadCodec) {
+        if (dev.whitewater.schema.SchemaRegistry.isReservedStoreName(name)) {
+            throw new IllegalArgumentException(
+                    dev.whitewater.schema.SchemaRegistry.STORE_NAME
+                            + " is an internal schema registry store; use updateSchema / getSchema / listSchemas");
+        }
         String resolved = WhitewaterClient.dottedName(name);
+        if (dev.whitewater.schema.SchemaRegistry.isReservedStoreName(resolved)) {
+            throw new IllegalArgumentException(
+                    dev.whitewater.schema.SchemaRegistry.STORE_NAME
+                            + " is an internal schema registry store; use updateSchema / getSchema / listSchemas");
+        }
         return new StateStore<>(transport, resolved, keyCodec, payloadCodec, DECLARED_DEFAULT_KEYS.get(resolved));
     }
 
@@ -146,10 +156,13 @@ public final class StateStore<K, V> implements ScopedRef {
     public MutationResult put(K key, V value, Map<String, ?> named, UUID mutationId) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(value, "value");
+        byte[] keyBytes = keyCodec.encode(key);
+        byte[] payloadBytes = payloadCodec.encode(value);
+        transport.schemaRegistry().validateResourceWrite(name, keyBytes, payloadBytes);
         ObjectNode op = Transport.json().createObjectNode();
         op.put("kind", "put_row");
-        op.put("key_base64", Wire.b64(keyCodec.encode(key)));
-        op.put("payload_base64", Wire.b64(payloadCodec.encode(value)));
+        op.put("key_base64", Wire.b64(keyBytes));
+        op.put("payload_base64", Wire.b64(payloadBytes));
         if (named != null && !named.isEmpty()) {
             op.set("named", Wire.namedValues(named));
         }
@@ -470,6 +483,34 @@ public final class StateStore<K, V> implements ScopedRef {
 
     /** Tombstone the store: the name cannot be recreated and every data
      * path refuses. Applied rows remain on replicas until reclaim. */
+    /** Associate or evolve a schema for this StateStore's {@code KEY} or {@code MESSAGE}. */
+    public dev.whitewater.schema.SchemaEntry updateSchema(
+            String definition,
+            dev.whitewater.schema.SchemaTarget target,
+            dev.whitewater.schema.SchemaType type) {
+        return transport.schemaRegistry().updateSchema(name, definition, target, type, null);
+    }
+
+    /** Associate or evolve a schema for this StateStore with explicit compatibility mode. */
+    public dev.whitewater.schema.SchemaEntry updateSchema(
+            String definition,
+            dev.whitewater.schema.SchemaTarget target,
+            dev.whitewater.schema.SchemaType type,
+            dev.whitewater.schema.SchemaCompatibility compatibility) {
+        return transport.schemaRegistry().updateSchema(name, definition, target, type, compatibility);
+    }
+
+    /** Look up the schema associated with this StateStore's {@code KEY} or {@code MESSAGE}. */
+    public java.util.Optional<dev.whitewater.schema.SchemaEntry> getSchema(
+            dev.whitewater.schema.SchemaTarget target) {
+        return transport.schemaRegistry().getSchema(name, target);
+    }
+
+    /** Remove the schema associated with this StateStore's {@code KEY} or {@code MESSAGE}. */
+    public boolean removeSchema(dev.whitewater.schema.SchemaTarget target) {
+        return transport.schemaRegistry().removeSchema(name, target);
+    }
+
     public ControlExecution drop() {
         ObjectNode body = Transport.json().createObjectNode();
         body.put("request_id", UUID.randomUUID().toString());

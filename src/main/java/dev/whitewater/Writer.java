@@ -122,6 +122,10 @@ public final class Writer {
         return executor;
     }
 
+    Transport transport() {
+        return transport;
+    }
+
     /** The session's fencing epoch. */
     public long sessionEpoch() {
         return sessionEpoch;
@@ -145,6 +149,10 @@ public final class Writer {
 
     /** Append one record with explicit request identity (retry-safe). */
     public AppendResult append(Record record) {
+        String feed = transport.schemaRegistry().feedForWriter(writer);
+        if (feed != null) {
+            transport.schemaRegistry().validateResourceWrite(feed, record.key(), record.payload());
+        }
         ensureOpen();
         UUID requestId = record.requestId() == null ? UUID.randomUUID() : record.requestId();
         var body = Wire.appendRequest(requestId, writer, sessionEpoch,
@@ -157,6 +165,12 @@ public final class Writer {
 
     /** Append a batch under one request; per-record results + batching guidance. */
     public BatchResult appendBatch(List<Record> records) {
+        String feed = transport.schemaRegistry().feedForWriter(writer);
+        if (feed != null) {
+            for (Record r : records) {
+                transport.schemaRegistry().validateResourceWrite(feed, r.key(), r.payload());
+            }
+        }
         ensureOpen();
         var array = Transport.json().createArrayNode();
         for (Record record : records) {

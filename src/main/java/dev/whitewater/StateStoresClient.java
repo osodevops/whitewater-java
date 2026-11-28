@@ -55,6 +55,11 @@ public final class StateStoresClient {
             throw new IllegalArgumentException(
                     "define() takes a StateStoreSpec — use StateStoreSpec.named(name)");
         }
+        if (dev.whitewater.schema.SchemaRegistry.isReservedStoreName(spec.name())) {
+            throw new IllegalArgumentException(
+                    dev.whitewater.schema.SchemaRegistry.STORE_NAME
+                            + " is an internal schema registry store and cannot be registered directly");
+        }
         if (source == null
                 && spec.namedKeys().stream().anyMatch(k -> k.extractor() != null)) {
             throw new IllegalArgumentException(

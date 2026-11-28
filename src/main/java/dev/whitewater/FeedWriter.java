@@ -139,7 +139,14 @@ public final class FeedWriter<K, V> implements AutoCloseable {
             future.completeExceptionally(new IllegalStateException("writer is closed"));
             return future;
         }
-        pending.add(new Pending(toWire(event), future));
+        final Writer.Record wireRecord;
+        try {
+            wireRecord = toWire(event);
+        } catch (RuntimeException ex) {
+            future.completeExceptionally(ex);
+            return future;
+        }
+        pending.add(new Pending(wireRecord, future));
         return future;
     }
 
@@ -321,10 +328,16 @@ public final class FeedWriter<K, V> implements AutoCloseable {
     }
 
     private Writer.Record toWire(FeedEvent<K, V> event) {
+        byte[] keyBytes = event.key() == null ? null : keyCodec.encode(event.key());
+        byte[] valBytes = event.value() == null ? null : valueCodec.encode(event.value());
+        String feed = writer.transport().schemaRegistry().feedForWriter(writer.writer());
+        if (feed != null) {
+            writer.transport().schemaRegistry().validateResourceWrite(feed, keyBytes, valBytes);
+        }
         return new Writer.Record(
                 event.requestId(),
-                event.key() == null ? null : keyCodec.encode(event.key()),
-                event.value() == null ? null : valueCodec.encode(event.value()),
+                keyBytes,
+                valBytes,
                 event.eventTimeNs(),
                 event.metadata());
     }

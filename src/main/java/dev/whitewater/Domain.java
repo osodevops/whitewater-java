@@ -159,7 +159,9 @@ public final class Domain {
 
     /** Names of declared StateStores in this Domain, sorted. */
     public List<String> stateStores() {
-        return snapshot().stateStores;
+        return snapshot().stateStores.stream()
+                .filter(s -> !dev.whitewater.schema.SchemaRegistry.isReservedStoreName(s))
+                .toList();
     }
 
     /** Re-pull the catalog snapshot — the next accessor sees fresh rows. */
@@ -716,6 +718,36 @@ public final class Domain {
      */
     public FeedClient feedOps() {
         return client.feeds();
+    }
+
+    public dev.whitewater.schema.SchemaEntry updateSchema(
+            String relative, String definition,
+            dev.whitewater.schema.SchemaTarget target, dev.whitewater.schema.SchemaType type) {
+        return client.updateSchema(resolve(relative), definition, target, type);
+    }
+
+    public dev.whitewater.schema.SchemaEntry updateSchema(
+            String relative, String definition,
+            dev.whitewater.schema.SchemaTarget target, dev.whitewater.schema.SchemaType type,
+            dev.whitewater.schema.SchemaCompatibility compatibility) {
+        return client.updateSchema(resolve(relative), definition, target, type, compatibility);
+    }
+
+    public java.util.Optional<dev.whitewater.schema.SchemaEntry> getSchema(
+            String relative, dev.whitewater.schema.SchemaTarget target) {
+        return client.getSchema(resolve(relative), target);
+    }
+
+    public List<dev.whitewater.schema.SchemaEntry> schemas() {
+        String prefix = name + ".";
+        return client.listSchemas().stream()
+                .filter(e -> e.resource().startsWith(prefix))
+                .toList();
+    }
+
+    public boolean removeSchema(
+            String relative, dev.whitewater.schema.SchemaTarget target) {
+        return client.removeSchema(resolve(relative), target);
     }
 
     /**

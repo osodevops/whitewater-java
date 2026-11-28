@@ -73,4 +73,24 @@ public class WhitewaterException extends RuntimeException {
             super(status, code, message);
         }
     }
+
+    /** Client-side schema definition, compatibility, or payload validation failed. */
+    public static class SchemaValidation extends WhitewaterException {
+        private final java.util.List<String> violations;
+
+        public SchemaValidation(String message) {
+            this(message, java.util.List.of(message));
+        }
+
+        public SchemaValidation(String message, java.util.List<String> violations) {
+            super(422, "schema.validation_failed", message);
+            this.violations = violations == null
+                    ? java.util.List.of()
+                    : java.util.List.copyOf(violations);
+        }
+
+        public java.util.List<String> violations() {
+            return violations;
+        }
+    }
 }
